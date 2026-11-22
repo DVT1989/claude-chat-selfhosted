@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>Claude Chat Browser</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; width: 300px; margin: 0; padding: 14px; color: #1f2937; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e5e7eb; background: #1f1f1f; } input { background: #2b2b2b; color: inherit; border-color: #444; } }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  label { display: block; font-size: 11px; opacity: .7; margin: 8px 0 3px; }
+  input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+  button { margin-top: 10px; padding: 7px 12px; border: 0; border-radius: 6px; background: #d97706; color: #fff; font: inherit; cursor: pointer; }
+  button.ghost { background: transparent; color: inherit; border: 1px solid #9ca3af; margin-left: 6px; }
+  .st { padding: 6px 8px; border-radius: 6px; background: rgba(217,119,6,.12); margin-bottom: 4px; }
+  .err { color: #b91c1c; margin-top: 8px; }
+  .hint { font-size: 11px; opacity: .7; margin-top: 8px; }
+  .upd { margin-top: 8px; padding: 8px; border-radius: 6px; border: 1px solid rgba(217,119,6,.5); animation: in .2s ease-out; }
+  .upd button { margin-top: 6px; }
+  @keyframes in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .upd { animation: none; } }
+  [hidden] { display: none !important; }
+</style></head>
+<body>
+  <h1>Claude Chat Browser</h1>
+  <div id="linked" hidden>
+    <div class="st" id="status"></div>
+    <div class="hint">Zolang Claude een tabblad bedient, toont de knop "AI" en zie je de Chrome-balk "debugt deze browser". Interne pagina's (chrome://) worden nooit bediend.</div>
+    <div id="upd" class="upd" hidden><span id="updText"></span><button id="updBtn">Update downloaden</button>
+      <div class="hint">Pak de zip uit over de huidige map en klik in chrome://extensions op vernieuwen. Laad je toch een nieuwe map, dan koppelt hij zichzelf opnieuw.</div></div>
+    <button id="pause">Claude pauzeren</button><button class="ghost" id="unlink">Ontkoppelen</button>
+  </div>
+  <div id="unlinked" hidden>
+    <label for="server">Adres van Claude Chat</label><input id="server" placeholder="https://...">
+    <label for="code">Koppelcode (Instellingen, Koppelingen)</label><input id="code" placeholder="XXXX-XXXX" autocomplete="off">
+    <label for="name">Naam van deze browser</label><input id="name" value="Chrome">
+    <button id="pair">Koppelen</button>
+  </div>
+  <div class="err" id="err" hidden></div>
+  <script src="popup.js"></script>
+</body></html>

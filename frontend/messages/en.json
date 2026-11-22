@@ -1,0 +1,133 @@
+{
+  "common": {
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "loading": "Loading…",
+    "test": "Test",
+    "testing": "Testing…",
+    "ok": "OK",
+    "error": "Error"
+  },
+  "login": {
+    "title": "Claude Code",
+    "subtitle": "Sign in",
+    "email": "Email or username",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…"
+  },
+  "sidebar": {
+    "newChat": "New conversation",
+    "settings": "Settings",
+    "logout": "Log out"
+  },
+  "settings": {
+    "layout": {
+      "title": "Settings",
+      "openMenu": "Open sidebar",
+      "profile": "Profile",
+      "claudeCode": "Claude Code",
+      "connectors": "Connectors",
+      "users": "Users"
+    },
+    "profile": {
+      "title": "Profile",
+      "email": "Email",
+      "name": "Name",
+      "namePlaceholder": "Your name",
+      "changePassword": "Change password (optional)",
+      "currentPassword": "Current password",
+      "currentPasswordPlaceholder": "••••••••",
+      "newPassword": "New password",
+      "newPasswordPlaceholder": "Minimum 8 characters",
+      "saved": "Saved",
+      "language": "Language",
+      "avatar": "Profile photo",
+      "avatarChoose": "Choose image",
+      "avatarRemove": "Remove",
+      "theme": "Color theme",
+      "themes": {
+        "dark": "Dark",
+        "dark-blue": "Dark Blue",
+        "light": "Light",
+        "light-blue": "Light Blue"
+      },
+      "languages": {
+        "nl": "Dutch",
+        "en": "English"
+      }
+    },
+    "claude": {
+      "title": "Claude Code",
+      "status": "Status",
+      "authenticated": "Connected",
+      "notAuthenticated": "Not connected",
+      "account": "Account",
+      "connect": "Connect to Claude",
+      "reconnect": "Reconnect",
+      "disconnect": "Disconnect",
+      "disconnectConfirm": "Disconnect Claude account?",
+      "usage": "Usage",
+      "noData": "No usage data yet"
+    },
+    "connectors": {
+      "title": "Connectors",
+      "add": "+ Add connector",
+      "empty": "No connectors. Add Git, SSH, FTP, SMB, Sudo or Python via the button.",
+      "name": "Name",
+      "namePlaceholder": "My server",
+      "type": "Type",
+      "credentials": "Credentials (stored encrypted)",
+      "save": "Save",
+      "deleteConfirm": "Delete connector?"
+    },
+    "admin": {
+      "backendClaudeCode": "Backend Claude Code",
+      "backendDesc": "Isolated Claude Code workspace with full access to the project source code at",
+      "backendSubDesc": "Read and edit backend/frontend TypeScript, view logs, run Docker commands, and manage the database. Requires a linked Claude account.",
+      "backendOpen": "Open",
+      "backendOpening": "Opening…",
+      "backendNotAuthenticated": "First link your Claude account via Settings → Claude Code.",
+      "backendError": "Could not open system conversation.",
+      "createUser": "Create user",
+      "createUserDesc": "Create a local account. Users sign in with their username and password.",
+      "username": "Username",
+      "usernamePlaceholder": "username",
+      "fullName": "Name",
+      "fullNamePlaceholder": "Full name",
+      "password": "Password",
+      "passwordPlaceholder": "Min. 8 characters",
+      "role": "Role",
+      "roleUser": "User",
+      "roleAdmin": "Administrator",
+      "createBtn": "Create",
+      "creating": "Creating…",
+      "createSuccess": "✓ User created",
+      "usersTitle": "Users",
+      "colUser": "User",
+      "colRole": "Role",
+      "colConversations": "Conversations",
+      "colStatus": "Status",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "deleteUser": "Delete",
+      "deleteConfirm": "Delete user \"{email}\"?"
+    }
+  },
+  "chat": {
+    "inputPlaceholder": "Message…",
+    "send": "Send",
+    "stop": "Stop",
+    "newChat": "New conversation",
+    "rateLimit": {
+      "reached": "Your limit is reached until {time}. Do you want me to continue at that time?",
+      "yes": "Yes",
+      "no": "No",
+      "scheduled": "Ok, I'll continue at {time}."
+    },
+    "noMessages": "No messages",
+    "streamError": "An error occurred while streaming."
+  }
+}

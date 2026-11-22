@@ -1,0 +1,133 @@
+{
+  "common": {
+    "save": "Opslaan",
+    "saving": "Opslaan…",
+    "cancel": "Annuleren",
+    "delete": "Verwijderen",
+    "loading": "Laden…",
+    "test": "Test",
+    "testing": "Testen…",
+    "ok": "OK",
+    "error": "Fout"
+  },
+  "login": {
+    "title": "Claude Code",
+    "subtitle": "Aanmelden",
+    "email": "E-mail of gebruikersnaam",
+    "password": "Wachtwoord",
+    "submit": "Aanmelden",
+    "submitting": "Aanmelden…"
+  },
+  "sidebar": {
+    "newChat": "Nieuw gesprek",
+    "settings": "Instellingen",
+    "logout": "Uitloggen"
+  },
+  "settings": {
+    "layout": {
+      "title": "Instellingen",
+      "openMenu": "Sidebar openen",
+      "profile": "Profiel",
+      "claudeCode": "Claude Code",
+      "connectors": "Connectoren",
+      "users": "Gebruikers"
+    },
+    "profile": {
+      "title": "Profiel",
+      "email": "E-mail",
+      "name": "Naam",
+      "namePlaceholder": "Je naam",
+      "changePassword": "Wachtwoord wijzigen (optioneel)",
+      "currentPassword": "Huidig wachtwoord",
+      "currentPasswordPlaceholder": "••••••••",
+      "newPassword": "Nieuw wachtwoord",
+      "newPasswordPlaceholder": "Minimaal 8 tekens",
+      "saved": "Opgeslagen",
+      "language": "Taal",
+      "avatar": "Profielfoto",
+      "avatarChoose": "Afbeelding kiezen",
+      "avatarRemove": "Verwijderen",
+      "theme": "Kleurthema",
+      "themes": {
+        "dark": "Donker",
+        "dark-blue": "Donker Blauw",
+        "light": "Licht",
+        "light-blue": "Licht Blauw"
+      },
+      "languages": {
+        "nl": "Nederlands",
+        "en": "English"
+      }
+    },
+    "claude": {
+      "title": "Claude Code",
+      "status": "Status",
+      "authenticated": "Verbonden",
+      "notAuthenticated": "Niet verbonden",
+      "account": "Account",
+      "connect": "Verbinden met Claude",
+      "reconnect": "Opnieuw verbinden",
+      "disconnect": "Ontkoppelen",
+      "disconnectConfirm": "Claude account ontkoppelen?",
+      "usage": "Gebruik",
+      "noData": "Nog geen gebruiksdata"
+    },
+    "connectors": {
+      "title": "Connectoren",
+      "add": "+ Connector toevoegen",
+      "empty": "Geen connectoren. Voeg Git, SSH, FTP, SMB, Sudo of Python toe via de knop rechtsboven.",
+      "name": "Naam",
+      "namePlaceholder": "Mijn server",
+      "type": "Type",
+      "credentials": "Inloggegevens (versleuteld opgeslagen)",
+      "save": "Opslaan",
+      "deleteConfirm": "Connector verwijderen?"
+    },
+    "admin": {
+      "backendClaudeCode": "Backend Claude Code",
+      "backendDesc": "Geïsoleerde Claude Code werkruimte met toegang tot de volledige projectbroncode op",
+      "backendSubDesc": "Lees en bewerk backend/frontend TypeScript, bekijk logs, voer Docker-commando's uit en beheer de database. Vereist een gekoppeld Claude account.",
+      "backendOpen": "Openen",
+      "backendOpening": "Openen…",
+      "backendNotAuthenticated": "Koppel eerst je Claude account via Instellingen → Claude Code.",
+      "backendError": "Kon systeem gesprek niet openen.",
+      "createUser": "Gebruiker aanmaken",
+      "createUserDesc": "Maak een lokaal account aan. Gebruikers loggen in met hun gebruikersnaam en wachtwoord.",
+      "username": "Gebruikersnaam",
+      "usernamePlaceholder": "gebruikersnaam",
+      "fullName": "Naam",
+      "fullNamePlaceholder": "Volledige naam",
+      "password": "Wachtwoord",
+      "passwordPlaceholder": "Min. 8 tekens",
+      "role": "Rol",
+      "roleUser": "Gebruiker",
+      "roleAdmin": "Beheerder",
+      "createBtn": "Aanmaken",
+      "creating": "Aanmaken…",
+      "createSuccess": "✓ Gebruiker aangemaakt",
+      "usersTitle": "Gebruikers",
+      "colUser": "Gebruiker",
+      "colRole": "Rol",
+      "colConversations": "Gesprekken",
+      "colStatus": "Status",
+      "statusActive": "Actief",
+      "statusInactive": "Inactief",
+      "deleteUser": "Verwijderen",
+      "deleteConfirm": "Gebruiker \"{email}\" verwijderen?"
+    }
+  },
+  "chat": {
+    "inputPlaceholder": "Bericht…",
+    "send": "Versturen",
+    "stop": "Stoppen",
+    "newChat": "Nieuw gesprek",
+    "rateLimit": {
+      "reached": "Je limiet is bereikt tot {time}. Wil je dat ik om die tijd het verder afmaak?",
+      "yes": "Ja",
+      "no": "Nee",
+      "scheduled": "Ok, ik ga om {time} verder."
+    },
+    "noMessages": "Geen berichten",
+    "streamError": "Er is een fout opgetreden tijdens het streamen."
+  }
+}

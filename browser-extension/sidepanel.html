@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Chat</title><link rel="stylesheet" href="sidepanel.css"></head>
+<body>
+  <header><span class="logo" aria-hidden="true"></span><h1 id="title">Claude Chat</h1><button id="open" class="ico" title="Openen in Claude Chat" aria-label="Openen in Claude Chat"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button></header>
+  <div id="bar" class="bar" role="status" hidden>
+    <span class="dot"></span><span id="bartxt" class="bartxt"></span>
+    <button id="ja" class="btn" hidden>Toestaan</button><button id="nee" class="btn g" hidden>Niet nu</button><button id="stop" class="btn g" hidden>Stop</button>
+  </div>
+  <main id="log" role="log" aria-live="polite" aria-label="Berichten"></main>
+  <div id="note" class="note" hidden></div>
+  <form id="form"><textarea id="input" rows="1" placeholder="Bericht aan Claude" aria-label="Bericht aan Claude"></textarea><button id="send" class="send" type="submit" aria-label="Versturen" title="Versturen"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button></form>
+  <script src="sidepanel.js"></script>
+</body></html>

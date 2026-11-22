@@ -1,0 +1,56 @@
+.env
+node_modules/
+.next/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# added for GitHub (Claude Chat)
+# secrets
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+*.token
+.sudo
+# backups and dumps
+backups/
+backups-*/
+_backup*/
+*.bak
+*.bak-*
+*.bak[0-9]*
+*.sql
+*.sql.gz
+*.tgz
+*.tar.gz
+*.dump
+# dependencies and builds
+release/
+__pycache__/
+*.pyc
+.venv/
+# runtime data and logs
+data/
+logs/
+uploads/
+# os and editor
+.idea/
+@eaDir/
+conv_*.jsonl
+conversation.jsonl
+import/
+.selfupdate.log
+backend/agent/claude-agent*
+*.exe
+dkim/
+*.private
+*.bak_*
+signing/
+
+# schema for a fresh install
+!database/migrations/*.sql

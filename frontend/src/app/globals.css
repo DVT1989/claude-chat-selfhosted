@@ -1,0 +1,1699 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Dark variants follow the data-theme attribute set by ThemeProvider */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, [data-theme="dark-blue"], [data-theme="dark-blue"] *));
+
+@theme {
+  --color-claude-orange: #CC785C;
+  --color-claude-bg: #1C1C1E;
+  --color-claude-sidebar: #141414;
+  --color-claude-input: #2C2C2E;
+  --color-claude-border: #3A3A3C;
+  --color-claude-text: #EBEBF5;
+  --color-claude-muted: #8E8E93;
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+  /* UI #15: radius tokens as Tailwind utilities (rounded-control, rounded-card); single source */
+  --radius-control: 14px;
+  --radius-card: 22px;
+}
+
+/* Dark (default) — warm tones matching Claude.ai */
+html[data-theme="dark"] {
+  /* Glass look (Finance app glass.css), dark */
+  --g-bg-base: color-mix(in srgb, var(--accent) 7%, #09080f);
+  --g-glow-1: color-mix(in srgb, var(--accent), transparent 76%);
+  --g-glow-2: color-mix(in srgb, var(--accent) 45%, rgba(88, 56, 160, .42));
+  --g-glow-3: color-mix(in srgb, var(--accent) 30%, rgba(70, 60, 150, .38));
+  --g-glow-4: rgba(80, 60, 140, .20);
+  --lg-tint: rgba(38, 32, 54, .42);
+  --lg-rim: rgba(255, 255, 255, .14);
+  --lg-shadow: inset 0 1px 0 rgba(255, 255, 255, .20), inset 0 -1px 0 rgba(255, 255, 255, .05), inset 0 0 22px rgba(255, 255, 255, .04), 0 20px 44px -18px rgba(0, 0, 0, .6);
+  --lg-sheen: linear-gradient(145deg, rgba(255, 255, 255, .12) 0%, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0) 70%, rgba(255, 255, 255, .05) 100%);
+  --lg-sel: rgba(255, 255, 255, .12);
+  --lg-sel-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 6px 16px -8px rgba(0, 0, 0, .6);
+  --card-bg: rgba(255, 255, 255, .055);
+  --card-border: rgba(255, 255, 255, .10);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 18px 40px -22px rgba(0, 0, 0, .6);
+  --bg: transparent;
+  --sidebar: var(--lg-tint);
+  --input: var(--card-bg);
+  --border: rgba(255, 255, 255, .09);
+  --text: #ece9f2;
+  --muted: #a7a1b8;
+  --accent: #D97757;
+  --user-bubble: var(--lg-sel);
+}
+
+/* Light */
+html[data-theme="light"] {
+  /* Glass look (Finance app glass.css), light */
+  --g-bg-base: color-mix(in srgb, var(--accent) 8%, #ece9f1);
+  --g-glow-1: color-mix(in srgb, var(--accent), transparent 80%);
+  --g-glow-2: rgba(120, 100, 220, .26);
+  --g-glow-3: color-mix(in srgb, var(--accent) 40%, rgba(150, 120, 230, .28));
+  --g-glow-4: rgba(170, 150, 240, .20);
+  --lg-tint: rgba(255, 255, 255, .45);
+  --lg-rim: rgba(255, 255, 255, .7);
+  --lg-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 -1px 0 rgba(255, 255, 255, .3), inset 0 0 22px rgba(255, 255, 255, .2), 0 18px 40px -20px rgba(40, 30, 70, .30), 0 2px 6px rgba(40, 30, 70, .06);
+  --lg-sheen: linear-gradient(145deg, rgba(255, 255, 255, .45) 0%, rgba(255, 255, 255, 0) 32%, rgba(255, 255, 255, 0) 68%, rgba(255, 255, 255, .18) 100%);
+  --lg-sel: rgba(255, 255, 255, .78);
+  --lg-sel-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(40, 30, 70, .10), 0 6px 16px -8px rgba(40, 30, 70, .28);
+  --card-bg: rgba(255, 255, 255, .62);
+  --card-border: rgba(255, 255, 255, .8);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 12px 32px -20px rgba(40, 30, 70, .26), 0 1px 3px rgba(40, 30, 70, .06);
+  --bg: transparent;
+  --sidebar: var(--lg-tint);
+  --input: var(--card-bg);
+  --border: rgba(30, 20, 50, .09);
+  --text: #18141f;
+  --muted: #625b70;
+  --accent: #D97757;
+  --user-bubble: var(--lg-sel);
+}
+
+/* Fallback for pages without ThemeProvider (server-render flash) */
+:root {
+  /* Glass look (Finance app glass.css), dark */
+  --g-bg-base: color-mix(in srgb, var(--accent) 7%, #09080f);
+  --g-glow-1: color-mix(in srgb, var(--accent), transparent 76%);
+  --g-glow-2: color-mix(in srgb, var(--accent) 45%, rgba(88, 56, 160, .42));
+  --g-glow-3: color-mix(in srgb, var(--accent) 30%, rgba(70, 60, 150, .38));
+  --g-glow-4: rgba(80, 60, 140, .20);
+  --lg-tint: rgba(38, 32, 54, .42);
+  --lg-rim: rgba(255, 255, 255, .14);
+  --lg-shadow: inset 0 1px 0 rgba(255, 255, 255, .20), inset 0 -1px 0 rgba(255, 255, 255, .05), inset 0 0 22px rgba(255, 255, 255, .04), 0 20px 44px -18px rgba(0, 0, 0, .6);
+  --lg-sheen: linear-gradient(145deg, rgba(255, 255, 255, .12) 0%, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0) 70%, rgba(255, 255, 255, .05) 100%);
+  --lg-sel: rgba(255, 255, 255, .12);
+  --lg-sel-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 6px 16px -8px rgba(0, 0, 0, .6);
+  --card-bg: rgba(255, 255, 255, .055);
+  --card-border: rgba(255, 255, 255, .10);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 18px 40px -22px rgba(0, 0, 0, .6);
+  --bg: transparent;
+  --sidebar: var(--lg-tint);
+  --input: var(--card-bg);
+  --border: rgba(255, 255, 255, .09);
+  --text: #ece9f2;
+  --muted: #a7a1b8;
+  --accent: #D97757;
+  --user-bubble: var(--lg-sel);
+}
+
+/* Accent variants for contrast (UI #2, 20-11-2026).
+   --accent-strong: filled buttons with white text. The accent is user-chosen, so the darker shade is
+   derived: same hue and chroma, lightness capped at 0.56 (oklch). #D97757 -> ~#B35536 (white 4.9:1).
+   --accent-text: accent-coloured text; in light mode capped at 0.50 (~#9F4425) so it reads on the light glass.
+   Older browsers without relative colour syntax get a plain mix with black. */
+html, :root {
+  --accent-strong: color-mix(in srgb, var(--accent) 78%, #000);
+  --accent-text: var(--accent);
+}
+html[data-theme="light"] { --accent-text: color-mix(in srgb, var(--accent) 70%, #000); }
+@supports (color: oklch(from red l c h)) {
+  html, :root { --accent-strong: oklch(from var(--accent) min(l, 0.56) c h); }
+  html[data-theme="light"] { --accent-text: oklch(from var(--accent) min(l, 0.50) c h); }
+}
+/* Status and brand tokens (UI #17). Dark values = the Tailwind 400 shades used so far; light mode the 600/700
+   shades (same as the existing light overrides). --claude is the fixed Claude orange (brand, not the user accent). */
+html, :root { --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; --claude: #D97757; --claude-text: #D97757; }
+html[data-theme="light"] { --ok: #14632f; --bad: #b42318; --warn: #b45309; --claude-text: #A64929; }
+
+/* accent text utilities and links follow --accent-text (only differs from --accent in light mode) */
+html[data-theme="light"] .text-\(--accent\), html[data-theme="light"] .hover\:text-\(--accent\):hover { color: var(--accent-text); }
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+html, body {
+  height: 100dvh;
+  min-height: 100dvh;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'liga' 1, 'kern' 1;
+  /* Prevent the page itself from scrolling — only designated containers scroll.
+     This keeps the header fixed at the top and input fixed at the bottom on mobile. */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Use dynamic viewport height on devices that support it (iOS Safari 16+, etc.)
+   100dvh shrinks when the browser chrome (address bar) is visible — no more
+   content hidden behind the address bar or home indicator. */
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Prose overrides for dark mode */
+.prose {
+  color: var(--text);
+  max-width: none;
+  font-size: 0.9375rem;   /* 15px */
+  line-height: 1.75;
+  /* Prevent long strings (URLs, code) from blowing out the layout width */
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.prose p:first-child { margin-top: 0; }
+.prose p:last-child  { margin-bottom: 0; }
+.prose code {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.855em;
+  color: #e2e8f0;
+  font-family: var(--font-geist-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.prose pre {
+  background: var(--input) !important;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.prose pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.prose a { color: var(--accent-text); text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent); }
+.prose a:hover { text-decoration-color: var(--accent); }
+.prose strong { color: var(--text); font-weight: 600; }
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  padding-left: 1em;
+  font-style: normal;
+}
+.prose hr { border-color: var(--border); }
+.prose h1, .prose h2, .prose h3, .prose h4 { color: var(--text); font-weight: 600; line-height: 1.35; }
+.prose h1 { font-size: 1.5em; }
+.prose h2 { font-size: 1.25em; }
+.prose h3 { font-size: 1.1em; }
+.prose ul li::marker, .prose ol li::marker { color: var(--muted); }
+.prose table { font-size: 0.875em; }
+.prose table th { background: var(--input); font-weight: 600; }
+.prose table td, .prose table th { border-color: var(--border); padding: 0.5em 0.75em; }
+
+/* One vertical rhythm in answers (UI #13, 20-11-2026): every block 0.75em apart, headings a little more
+   above than below; ol and ul indent the same. Overrides the typography plugin's mixed 0.5-1.25em values. */
+.prose :where(p, ul, ol, pre, blockquote, table, figure, hr) { margin-top: 0.75em; margin-bottom: 0.75em; }
+.prose :where(h1, h2, h3, h4) { margin-top: 1.25em; margin-bottom: 0.5em; }
+.prose :where(li) { margin-top: 0.25em; margin-bottom: 0.25em; }
+.prose :where(li > ul, li > ol) { margin-top: 0.25em; margin-bottom: 0.25em; }
+.prose :where(ul, ol) { padding-left: 1.5em; }
+.prose :where(ul > li, ol > li) { padding-left: 0.25em; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+
+/* Code highlight */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Design tokens
+   One motion language: strong ease-out for things that respond to the user,
+   an iOS-like curve for the drawer. UI motion stays under 300ms. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* --radius-control and --radius-card live in @theme (rounded-control / rounded-card) */
+  --radius-composer: 22px;
+  /* shadows are tinted to the warm background, never pure black */
+  --shadow-pop: var(--lg-shadow);
+  --shadow-composer: var(--card-shadow);
+}
+html[data-theme="light"] {
+  --shadow-pop: var(--lg-shadow);
+  --shadow-composer: var(--card-shadow);
+}
+
+/* Native feel on touch devices. Base layer so component utilities can still override. */
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+  a, button, summary, label, [role="button"] { touch-action: manipulation; }
+  button, [role="button"] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    /* Press feedback on every control: the UI acknowledges the finger immediately. */
+    transition: transform 160ms var(--ease-out), background-color 150ms ease,
+                color 150ms ease, border-color 150ms ease, opacity 150ms ease;
+  }
+  button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(0.97);
+  }
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+}
+/* iOS zooms the page when a focused field is under 16px; fix the cause instead of disabling zoom. */
+@media (pointer: coarse) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* Inline code: typography adds literal backticks, we style it ourselves instead. */
+.prose code::before, .prose code::after { content: none; }
+.prose pre { border-radius: var(--radius-card); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03); }
+.prose pre code { font-size: 0.82em; line-height: 1.65; }
+.prose table td, .prose table th { overflow-wrap: anywhere; }
+
+/* Typography colours follow the theme tokens in both modes.
+   prose-invert (used for the dark look) otherwise forces white text in light mode. */
+html .prose, html .prose-invert {
+  --tw-prose-body: var(--text);
+  --tw-prose-headings: var(--text);
+  --tw-prose-lead: var(--muted);
+  --tw-prose-links: var(--accent-text);
+  --tw-prose-bold: var(--text);
+  --tw-prose-counters: var(--muted);
+  --tw-prose-bullets: var(--muted);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--muted);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted);
+  --tw-prose-code: var(--text);
+  --tw-prose-pre-code: var(--text);
+  --tw-prose-pre-bg: var(--input);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+}
+
+/* Syntax colours for light mode (github-dark is imported for the dark default). */
+html[data-theme="light"] .hljs { color: #3b3631; }
+html[data-theme="light"] .hljs-comment,
+html[data-theme="light"] .hljs-quote { color: #8a8174; font-style: italic; }
+html[data-theme="light"] .hljs-keyword,
+html[data-theme="light"] .hljs-selector-tag,
+html[data-theme="light"] .hljs-built_in,
+html[data-theme="light"] .hljs-doctag { color: #b4452a; }
+html[data-theme="light"] .hljs-string,
+html[data-theme="light"] .hljs-regexp,
+html[data-theme="light"] .hljs-addition { color: #1f6f5c; }
+html[data-theme="light"] .hljs-number,
+html[data-theme="light"] .hljs-literal,
+html[data-theme="light"] .hljs-symbol,
+html[data-theme="light"] .hljs-bullet { color: #8a5a00; }
+html[data-theme="light"] .hljs-title,
+html[data-theme="light"] .hljs-section,
+html[data-theme="light"] .hljs-function { color: #3d4fa3; }
+html[data-theme="light"] .hljs-attr,
+html[data-theme="light"] .hljs-attribute,
+html[data-theme="light"] .hljs-variable,
+html[data-theme="light"] .hljs-template-variable,
+html[data-theme="light"] .hljs-type { color: #7a3e8f; }
+html[data-theme="light"] .hljs-deletion { color: #b3261e; }
+
+/* Popovers scale in from their trigger, never from nothing. */
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.pop-in { animation: pop-in 150ms var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  button:not(:disabled):active { transform: none; }
+}
+
+/* ── PWA safe-area utilities ─────────────────────────────────
+   Use env() with a 0px fallback so these are no-ops in the browser
+   and only kick in when the PWA runs in standalone/fullscreen mode. */
+@layer utilities {
+  .pt-safe  { padding-top:    env(safe-area-inset-top,    0px); }
+  .pb-safe  { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .pl-safe  { padding-left:   env(safe-area-inset-left,   0px); }
+  .pr-safe  { padding-right:  env(safe-area-inset-right,  0px); }
+}
+
+/* Streaming cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+/* Input focus */
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+html[data-theme="light"] .prose code {
+  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.1);
+  color: var(--text);
+}
+html[data-theme="light"] .hljs {
+  background: transparent !important;
+  color: #1a1a1a;
+}
+
+/* New messages ease in (opacity + a few px), like the Claude app. Only on mount; no layout animation. */
+.msg-in {
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-in { transition: opacity 150ms ease; @starting-style { transform: none; } }
+}
+
+/* Native feel on phones: no grey tap flash, no rubber-band scroll of the whole page */
+html { -webkit-tap-highlight-color: transparent; }
+body { overscroll-behavior-y: none; }
+
+/* ============================================================
+   Glass look, like the Finance app (glass.css): soft wallpaper backdrop,
+   frosted panels with a light rim and a specular sheen. Style only, layout unchanged.
+   ============================================================ */
+html {
+  background:
+    radial-gradient(55% 50% at 0% 0%, var(--g-glow-1), transparent 70%),
+    radial-gradient(50% 55% at 100% 100%, var(--g-glow-2), transparent 70%),
+    radial-gradient(42% 42% at 88% 6%, var(--g-glow-3), transparent 70%),
+    radial-gradient(40% 40% at 18% 92%, var(--g-glow-4), transparent 70%),
+    var(--g-bg-base);
+  background-attachment: fixed;
+  min-height: 100%;
+}
+body { background: transparent !important; }
+
+/* The sidebar floats as a liquid-glass panel */
+.glass-panel {
+  background: var(--lg-tint) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--lg-rim) !important;
+  box-shadow: var(--lg-shadow);
+  /* position comes from the component (fixed drawer on phones, relative on desktop) */
+}
+.glass-panel::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: var(--lg-sheen);
+}
+/* Selected item = raised glass capsule */
+
+/* Cards, composer, tool blocks, bubbles: frosted glass */
+/* exact class word only (~=): "hover:bg-(--input)" must stay transparent until hovered */
+[class~="bg-(--input)"], [class~="bg-(--user-bubble)"] {
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+}
+[class~="bg-(--input)"][class*="border"] { border-color: var(--card-border) !important; box-shadow: var(--card-shadow); }
+
+/* Sidebar actions and conversations: each its own glass button */
+
+/* Phones: no specular sheen over the drawer, it washed out the top items */
+@media (max-width: 767px) { .glass-panel::after { display: none; } }
+
+/* Option buttons get a faint accent tint, so they read differently from the conversations */
+
+/* Phones: no aurora glow at the top of the screen (it read as a haze over the top bar); keep it low */
+@media (max-width: 767px) {
+  html {
+    background:
+      radial-gradient(70% 40% at 100% 100%, var(--g-glow-2), transparent 70%),
+      radial-gradient(60% 35% at 0% 100%, var(--g-glow-4), transparent 70%),
+      var(--g-bg-base);
+    background-attachment: fixed;
+  }
+}
+
+/* ===== PWA launch splash (standalone only, once per app session), like the Finance app ===== */
+.app-splash { display: none; }
+html.splash-active { overflow: hidden; }
+html.splash-active .app-splash {
+  display: block; position: fixed; inset: 0; z-index: 100000; overflow: hidden;
+  background: #0c0a12; transition: opacity 450ms ease;
+}
+.app-splash.hide { opacity: 0; }
+.app-splash::before {
+  content: ""; position: absolute; inset: -25vmax; opacity: 0;
+  background:
+    radial-gradient(40vmax 40vmax at 28% 22%, color-mix(in srgb, var(--accent), transparent 55%), transparent 60%),
+    radial-gradient(38vmax 38vmax at 78% 82%, rgba(88, 56, 160, .45), transparent 60%),
+    radial-gradient(34vmax 34vmax at 85% 15%, rgba(139, 92, 246, .28), transparent 60%);
+  filter: blur(10px);
+  animation: splashGlow 900ms ease-out 100ms forwards, splashDrift 16s ease-in-out infinite alternate;
+}
+.app-splash-tile {
+  position: absolute; left: 50%; top: 50%; width: 104px; height: 104px; transform: translate(-50%, -50%);
+  border-radius: 28px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #2a2338, #16121f); border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 18px 50px color-mix(in srgb, var(--accent), transparent 60%);
+}
+.app-splash-tile svg { animation: splashSpin 1.4s cubic-bezier(0.23, 1, 0.32, 1) 120ms both; }
+.app-splash-tile::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 35%, rgba(255, 255, 255, .35), transparent 65%);
+  transform: translateX(-130%); animation: splashShine 1.5s ease 450ms infinite;
+}
+.app-splash-text { position: absolute; left: 0; right: 0; top: calc(50% + 72px); display: flex; flex-direction: column; align-items: center; }
+.app-splash-name {
+  color: #fff; font-weight: 700; font-size: 1.35rem; letter-spacing: -0.02em;
+  opacity: 0; animation: splashFadeUp 500ms cubic-bezier(0.23, 1, 0.32, 1) 250ms forwards;
+}
+.app-splash-bar { position: relative; margin-top: 1.1rem; width: 120px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, .16); overflow: hidden; opacity: 0; animation: splashFadeUp 400ms ease 400ms forwards; }
+.app-splash-bar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 4px; background: var(--accent); animation: splashBar 1.1s ease-in-out infinite; }
+@keyframes splashGlow { to { opacity: 1; } }
+@keyframes splashDrift { from { transform: translate3d(-2%, -1%, 0); } to { transform: translate3d(2%, 1.5%, 0); } }
+@keyframes splashSpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+@keyframes splashShine { 0% { transform: translateX(-130%); } 60%, 100% { transform: translateX(130%); } }
+@keyframes splashFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes splashBar { 0% { left: -40%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .app-splash::before, .app-splash-tile svg, .app-splash-tile::after, .app-splash-bar::after { animation: none; opacity: 1; }
+  .app-splash-name, .app-splash-bar { animation: none; opacity: 1; }
+}
+
+/* iOS-style switch (login "Onthouden") */
+.ios-switch {
+  appearance: none; -webkit-appearance: none; flex-shrink: 0; position: relative; cursor: pointer;
+  width: 51px; height: 31px; border-radius: 999px; background: var(--border); transition: background-color 200ms ease;
+}
+.ios-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .3); transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ios-switch:checked { background: var(--accent); }
+.ios-switch:checked::after { transform: translateX(20px); }
+.ios-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Mobile top bar: extra room below the iOS status bar, so the title sits clear of the system blur at the top edge */
+.pt-safe-header { padding-top: calc(env(safe-area-inset-top, 0px) + 12px); }
+
+/* ── WhatsApp-style conversation list (keeps the glass colours) ── */
+
+.wa-search {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+}
+.wa-search:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, var(--card-border)); }
+.wa-new {
+  background: var(--accent-strong);
+  color: #fff;
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: transform 160ms var(--ease-out), filter 150ms ease;
+}
+@media (hover: hover) { .wa-new:hover { filter: brightness(1.08); } }
+.wa-new:active { transform: scale(0.94); }
+
+/* ══ WhatsApp / Outlook layout (round 2): icon rail + flat list + bubbles, glass colours kept ══ */
+
+/* Icon rail */
+.wa-rail {
+  background: color-mix(in srgb, var(--text) 4%, var(--lg-tint));
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  border-right: 1px solid var(--border);
+}
+.rail-sep { width: 32px; height: 1px; margin: 8px auto; background: var(--border); flex-shrink: 0; }
+.rail-scroll { scrollbar-width: none; }
+.rail-scroll::-webkit-scrollbar { display: none; }
+.rail-btn {
+  width: 60px; flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 0 5px;
+  color: var(--muted);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+  .rail-btn:hover { color: var(--text); }
+  
+}
+
+.rail-btn-on { color: var(--text); }
+
+@media (hover: hover) { .rail-btn-danger:hover { color: var(--bad); } }
+.rail-avatar {
+  width: 40px; height: 40px; border-radius: 999px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow 150ms ease;
+}
+.rail-avatar-on { box-shadow: 0 0 0 2px var(--accent); }
+/* Shorter windows: tighten the rail so every section fits without scrolling */
+@media (max-height: 900px) {
+  .rail-btn { padding: 2px 0 3px; gap: 2px; }
+  
+  
+  .rail-sep { margin: 5px auto; }
+}
+/* Phones: the drawer sits over the chat, so give rail and list a solid base under the glass tint */
+@media (max-width: 767px) {
+  aside .wa-rail, aside .wa-pane { background: linear-gradient(var(--lg-tint), var(--lg-tint)), var(--g-bg-base); }
+}
+
+/* Conversation list pane: flush panel, no floating card */
+.wa-pane {
+  background: var(--lg-tint);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  border-right: 1px solid var(--border);
+}
+
+/* Rows like WhatsApp: full width, no pill, divider under the text only */
+.wa-row { height: 72px; border-radius: 0; transition: background-color 120ms ease; -webkit-tap-highlight-color: transparent; }
+.wa-row-text { border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+@media (hover: hover) { .wa-row:hover { background: color-mix(in srgb, var(--text) 5%, transparent); } }
+.wa-row:active { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.wa-row-on, .wa-row-on:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.wa-row-on .wa-row-text { border-bottom-color: transparent; }
+
+/* Contact-style avatar: initials on a soft colour per conversation */
+.conv-avatar {
+  background: hsl(var(--h) 45% 50% / .28);
+  color: hsl(var(--h) 75% 78%);
+  box-shadow: inset 0 0 0 1px hsl(var(--h) 60% 70% / .18);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .conv-avatar { background: hsl(var(--h) 60% 85%); color: hsl(var(--h) 45% 30%); }
+}
+:root[data-theme="light"] .conv-avatar { background: hsl(var(--h) 60% 85%); color: hsl(var(--h) 45% 30%); }
+
+/* Chat header with the contact avatar */
+.wa-chat-head { border-bottom: 1px solid var(--border); }
+
+/* Bubbles */
+.wa-bubble {
+  position: relative;
+  padding: 6px 10px 4px 11px;
+  border-radius: 12px;
+  /* drop-shadow follows the whole shape, tail included (box-shadow skipped the tail) */
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .18));
+}
+/* Opaque colours: bubble and tail are exactly the same, no blur difference or seam */
+.wa-in  { background: color-mix(in srgb, var(--text) 12%, var(--g-bg-base)); border-top-left-radius: 0; }
+.wa-out { background: color-mix(in srgb, var(--accent) 34%, var(--g-bg-base)); border-top-right-radius: 0; }
+/* Tails: a small curved point on the top corner, overlapping 1px so no hairline shows */
+.wa-in::before, .wa-out::before {
+  content: ""; position: absolute; top: 0; width: 9px; height: 12px; background: inherit;
+}
+.wa-in::before  { left: -8px;  clip-path: path('M9 0 L0 0 Q4 1 6 4 L9 12 Z'); }
+.wa-out::before { right: -8px; clip-path: path('M0 0 L9 0 Q5 1 3 4 L0 12 Z'); }
+.wa-in .prose { font-size: 15px; }
+.wa-in .prose > :first-child { margin-top: 0; }
+.wa-in .prose > :last-child { margin-bottom: 0; }
+.wa-time {
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 10px;
+  font-size: 11px; line-height: 1;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ══ Round 3: app-style tiles in the rail, tooltips, aligned list ══ */
+.rail-btn {
+  position: relative;
+  width: 64px; padding: 5px 0;
+  gap: 4px;
+}
+/* Coloured glass tile per section (--c), like app icons in a dock */
+.rail-tile {
+  width: 40px; height: 40px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  /* UI #8: no opacity or filter on the tile any more (they greyed the glyph and rasterised it softly);
+     an idle tile is a calmer mix of its colour, the glyph stays near-white and sharp */
+  color: rgba(255, 255, 255, .92);
+  --tile-bg: color-mix(in srgb, var(--c) 82%, #000);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 50%),
+    color-mix(in srgb, var(--tile-bg) 80%, #4a4656);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .22),
+    inset 0 0 0 1px rgba(255, 255, 255, .08),
+    0 3px 8px -4px color-mix(in srgb, var(--c) 55%, transparent);
+  transition: background-color 150ms ease, color 150ms ease, transform 160ms var(--ease-out), box-shadow 150ms ease;
+}
+/* glyphs in a tile: exactly 24px with a 2px stroke, so integer-grid lines fall on whole pixels */
+.rail-tile > svg { width: 24px; height: 24px; flex-shrink: 0; stroke-width: 2; }
+.rail-btn-on .rail-tile, .tab-btn-on .rail-tile, .admin-card .rail-tile,
+.rail-btn:hover .rail-tile {
+  color: #fff;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, 0) 50%),
+    var(--tile-bg);
+}
+@media (hover: hover) {
+  .rail-btn:hover .rail-tile { transform: translateY(-1px); }
+}
+.rail-btn:active .rail-tile { transform: scale(0.93); }
+.rail-btn-on .rail-tile {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .3),
+    0 0 0 2px color-mix(in srgb, var(--c) 30%, transparent),
+    0 6px 16px -4px color-mix(in srgb, var(--c) 80%, transparent);
+}
+/* Active marker: a short pill on the rail's left edge, like Teams / Outlook */
+.rail-btn-on::before {
+  content: ""; position: absolute; left: 0; top: 50%;
+  width: 4px; height: 22px; margin-top: -11px;
+  border-radius: 0 4px 4px 0;
+  background: var(--c);
+}
+@media (min-width: 768px) { .rail-btn-on::before { margin-top: -11px; } }
+/* Plain (uncoloured) tile for Afmelden */
+.rail-btn-plain .rail-tile, .rail-btn-plain:hover .rail-tile {
+  background: transparent; box-shadow: none; color: var(--muted);
+}
+@media (hover: hover) {
+  .rail-btn-plain:hover .rail-tile { background: color-mix(in srgb, var(--text) 8%, transparent); }
+  .rail-btn-danger:hover .rail-tile { color: var(--bad); }
+}
+.claude-white svg, .claude-white path { fill: #fff; }
+
+/* Labels only in the phone drawer (no hover there); desktop gets a tooltip instead */
+@media (min-width: 768px) {
+  
+  .rail-btn { padding: 4px 0; }
+}
+.rail-tip {
+  position: fixed; left: 80px;
+  transform: translateY(-50%);
+  padding: 5px 10px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, var(--g-bg-base));
+  border: 1px solid var(--card-border);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, .55);
+  pointer-events: none; z-index: 60;
+  animation: railTip 140ms var(--ease-out) 200ms both;
+}
+@keyframes railTip { from { opacity: 0; transform: translate(-4px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+@media (hover: none), (max-width: 767px) { .rail-tip { display: none; } }
+/* short windows: tighter spacing, but the tile stays 40px so the 24px glyph keeps its proportion (UI #8, was 36px) */
+@media (max-height: 900px) {
+  .rail-btn { padding: 3px 0; }
+}
+
+/* List: thin scrollbar that does not eat into the right column */
+.wa-list { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 18%, transparent) transparent; }
+.wa-list::-webkit-scrollbar { width: 6px; }
+.wa-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 18%, transparent); border-radius: 3px; }
+
+/* ══ Round 4: tabs for grouped settings (Koppelingen) ══ */
+.sub-tabs {
+  display: flex; gap: 4px;
+  width: max-content; max-width: 100%;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  overflow-x: auto; scrollbar-width: none;
+}
+.sub-tabs::-webkit-scrollbar { display: none; }
+.sub-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 36px; padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13.5px; font-weight: 500; white-space: nowrap;
+  color: var(--muted);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+@media (hover: hover) { .sub-tab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); } }
+.sub-tab-on, .sub-tab-on:hover {
+  color: var(--text);
+  background: var(--lg-sel);
+  box-shadow: var(--lg-sel-shadow);
+}
+.sub-tab-on svg { color: var(--accent); }
+
+@media (max-width: 767px) {
+  /* a sideways-scrolling strip on phones; the active tab is scrolled into view */
+  .sub-tabs { width: 100%; }
+  .sub-tab { flex-shrink: 0; padding: 0 12px; }
+  /* the phone top bar already shows the page title */
+  .settings-body h1 { display: none; }
+}
+
+/* Reduced motion: no tooltip slide, no tile lift */
+@media (prefers-reduced-motion: reduce) {
+  .rail-tip { animation: none; }
+  .rail-tile, .wa-new, .sub-tab, .wa-row { transition: none; }
+  .rail-btn:hover .rail-tile, .rail-btn:active .rail-tile, .wa-new:active { transform: none; }
+}
+
+/* ══ Phone navigation: bottom tab bar (same buttons as the rail) + top bar with avatar ══ */
+:root { --tabbar-h: 0px; }
+@media (max-width: 767px) {
+  /* space under the icons: the home-indicator area minus 24px (≈10px on an iPhone), at least 6px */
+  :root { --tabbar-pad: max(6px, calc(env(safe-area-inset-bottom, 0px) - 24px)); --tabbar-h: calc(62px + var(--tabbar-pad)); }
+  /* the content column keeps clear of the fixed tab bar */
+  .has-tabbar { padding-bottom: var(--tabbar-h); }
+}
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  height: var(--tabbar-h);
+  padding-bottom: var(--tabbar-pad);
+  background: linear-gradient(var(--lg-tint), var(--lg-tint)), color-mix(in srgb, var(--g-bg-base) 70%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  border-top: 1px solid var(--border);
+}
+.tabbar-scroll {
+  height: 62px;
+  display: flex; align-items: center; justify-content: space-around; gap: 2px;
+  padding: 0 6px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.tabbar-scroll::-webkit-scrollbar { display: none; }
+.tab-btn {
+  position: relative; flex: 1 0 58px; max-width: 84px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 2px 4px;
+  color: var(--muted);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.tab-btn .rail-tile { width: 32px; height: 32px; border-radius: 10px; }
+.tab-btn:active .rail-tile { transform: scale(0.92); }
+
+.tab-btn-on { color: var(--text); }
+.tab-btn-on .rail-tile {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 0 0 2px color-mix(in srgb, var(--c) 30%, transparent), 0 4px 12px -4px color-mix(in srgb, var(--c) 80%, transparent);
+}
+
+/* active marker: short pill above the tile, the bottom-bar version of the rail's side marker */
+.tab-btn-on::before {
+  content: ""; position: absolute; top: 0; left: 50%;
+  width: 22px; height: 3px; margin-left: -11px;
+  border-radius: 0 0 3px 3px;
+  background: var(--c);
+}
+
+/* Phone top bar */
+.mtopbar {
+  background: linear-gradient(var(--lg-tint), var(--lg-tint)), color-mix(in srgb, var(--g-bg-base) 70%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-btn:active .rail-tile { transform: none; }
+}
+
+/* iOS home-screen app: 100dvh can come out shorter than the screen, leaving a dark strip under the tab bar.
+   In standalone mode there is no browser chrome, so 100vh is the full, stable height. */
+@media (display-mode: standalone) {
+  html, body { height: 100vh; min-height: 100vh; }
+}
+/* and should a strip remain, it gets the tab bar colour: the bar background runs on below the screen edge */
+.tabbar::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 120px; background: inherit; pointer-events: none; }
+
+/* Tab bar without labels: slightly larger tiles; the user's avatar is the last tile, same shape */
+.tab-btn { flex: 1 0 52px; max-width: 76px; padding: 0; justify-content: center; height: 62px; }
+.tab-btn .rail-tile { width: 42px; height: 42px; border-radius: 13px; }
+.tab-btn-avatar .rail-tile, .tab-btn-avatar.tab-btn-on .rail-tile { padding: 0; overflow: hidden; background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
+.tab-btn-avatar.tab-btn-on .rail-tile { box-shadow: 0 0 0 2px var(--accent), 0 4px 12px -4px color-mix(in srgb, var(--accent) 80%, transparent); }
+
+/* ══ Motion pass (2026-11-17): gliding indicators, page entrances, staggered lists ══ */
+:root {
+  /* a little overshoot: playful but short */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* Gliding markers replace the static per-item bars */
+.rail-btn-on::before, .tab-btn-on::before { content: none; }
+.rail-ind {
+  position: absolute; left: 0; top: 0; z-index: 1;
+  width: 4px; height: 22px; border-radius: 0 4px 4px 0;
+  pointer-events: none;
+}
+.tab-ind {
+  position: absolute; left: 0; top: 0; z-index: 1;
+  width: 22px; height: 3px; border-radius: 0 0 3px 3px;
+  pointer-events: none;
+}
+.tabbar-scroll { position: relative; }
+/* UI #14: indicators glide without overshoot (was 420ms spring) */
+.rail-ind.is-anim, .tab-ind.is-anim { transition: transform 260ms var(--ease-out), background-color 260ms ease; }
+
+/* Settings tabs: one pill that slides to the chosen tab */
+.sub-tabs { position: relative; }
+.sub-tab { position: relative; z-index: 1; }
+.sub-tab-on, .sub-tab-on:hover { background: transparent; box-shadow: none; }
+.sub-tab-pill {
+  position: absolute; left: 0; top: 0; z-index: 0;
+  border-radius: 10px;
+  background: var(--lg-sel);
+  box-shadow: var(--lg-sel-shadow);
+  pointer-events: none;
+}
+.sub-tab-pill.is-anim { transition: transform 260ms var(--ease-out), width 260ms var(--ease-out), height 260ms var(--ease-out); }
+
+/* Page entrances */
+@keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes chatInDesk { from { opacity: 0; } to { opacity: 1; } }
+@keyframes chatInPhone { from { opacity: .4; transform: translateX(36px); } to { opacity: 1; transform: none; } }
+.page-in { animation: pageIn 300ms var(--ease-out) both; }
+.chat-in { animation: chatInDesk 200ms ease-out both; }
+@media (max-width: 767px) { .chat-in { animation: chatInPhone 300ms var(--ease-out) both; } }
+
+/* Lists: rows arrive one after another */
+@keyframes rowIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+/* stagger stops after 8 rows, so long lists do not keep trickling in */
+.wa-row-in { animation: rowIn 340ms var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 8) * 28ms); }
+
+/* Opening a conversation: existing messages are simply there (no entrance per bubble) */
+.msgs-static .msg-in { transition: none; }
+
+/* New bubbles pop in a little more noticeably */
+.msg-in { transform-origin: bottom left; }
+.msg-in.justify-end { transform-origin: bottom right; }
+
+/* Connector rows */
+.conn-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+@media (hover: hover) { .conn-row:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--card-border)); } }
+.conn-type {
+  width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font: 600 11px/1 var(--font-geist-mono, ui-monospace, monospace); letter-spacing: .04em;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.conn-state {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  height: 28px; padding: 0 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 500;
+  color: var(--muted);
+  border: 1px solid var(--card-border);
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 160ms var(--ease-out);
+}
+.conn-state:active { transform: scale(0.95); }
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background-color 200ms ease, box-shadow 200ms ease; }
+.conn-state.is-on { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.conn-state.is-on .conn-dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+@media (max-width: 480px) { .conn-state { padding: 0 8px; } }
+
+/* Round icon buttons (test / edit / delete) */
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  transition: color 150ms ease, background-color 150ms ease, transform 160ms var(--ease-out);
+}
+@media (hover: hover) { .icon-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); } }
+.icon-btn:active { transform: scale(0.9); }
+.icon-btn:disabled { opacity: .6; }
+.icon-btn.is-ok { color: var(--ok); }
+.icon-btn.is-err { color: var(--bad); }
+@media (hover: hover) { .icon-btn.is-danger:hover { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); } }
+.icon-btn:focus-visible, .conn-state:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Touch: small buttons get an invisible 44px hit area around them; the visible size stays the same (UI #10) */
+@media (pointer: coarse) {
+  .icon-btn, .hit-44 { position: relative; }
+  .icon-btn::after, .hit-44::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
+  }
+}
+
+/* Buttons and chips get a light press everywhere */
+.wa-row:active { transform: scale(0.995); }
+.sub-tab:active { transform: scale(0.96); }
+.sub-tab { transition: color 150ms ease, transform 160ms var(--ease-out); }
+
+/* Toast-like notices slide in */
+[role="status"], [role="alert"] { animation: pageIn 260ms var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-ind.is-anim, .tab-ind.is-anim, .sub-tab-pill.is-anim { transition: none; }
+  .page-in, .chat-in, .wa-row-in, [role="status"], [role="alert"] { animation: none; }
+  .wa-row:active, .sub-tab:active, .icon-btn:active, .conn-state:active { transform: none; }
+}
+
+/* new bubbles grow out of their tail a little */
+.msg-in .wa-bubble { transition: transform 280ms var(--ease-spring); transform-origin: top left; }
+.msg-in.justify-end .wa-bubble { transform-origin: top right; }
+@starting-style { .msg-in .wa-bubble { transform: scale(0.94); } }
+.msgs-static .msg-in .wa-bubble { transition: none; }
+@media (prefers-reduced-motion: reduce) { .msg-in .wa-bubble { transition: none; } }
+
+/* ══ Users admin: cards with an edit panel; Admin tools overview ══ */
+.user-card {
+  border-radius: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  padding: 10px 12px;
+  transition: border-color 150ms ease;
+}
+.user-card.is-open { border-color: color-mix(in srgb, var(--accent) 40%, var(--card-border)); }
+@media (hover: hover) { .user-card:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--card-border)); } }
+.user-initial {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.role-pill {
+  flex-shrink: 0; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+  color: var(--muted); border: 1px solid var(--card-border);
+}
+.role-pill.is-admin { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.role-pill.is-off { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+@keyframes editOpen { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.user-edit { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--card-border); animation: editOpen 240ms var(--ease-out) both; }
+/* the role switch is a two-button segmented control without the gliding pill */
+.sub-tab.role-on, .sub-tab.role-on:hover { background: var(--lg-sel); box-shadow: var(--lg-sel-shadow); color: var(--text); }
+.sub-tab:disabled { cursor: default; }
+
+.admin-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px; border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  transition: border-color 150ms ease, transform 160ms var(--ease-out);
+}
+.admin-card .rail-tile { width: 44px; height: 44px; border-radius: 13px; }
+@media (hover: hover) {
+  .admin-card:hover { border-color: color-mix(in srgb, var(--c) 45%, var(--card-border)); }
+  .admin-card:hover .admin-card-chev { transform: translateX(3px); }
+}
+.admin-card-chev { transition: transform 200ms var(--ease-out); }
+.admin-card:active { transform: scale(0.98); }
+@media (prefers-reduced-motion: reduce) {
+  .user-edit { animation: none; }
+  .admin-card:active { transform: none; }
+}
+
+/* rows can be held (delete): no iOS link preview or text selection while pressing */
+.wa-row { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
+/* ══ On-screen keyboard (ViewportSync): app fills the visible area, composer right above the keys ══ */
+html.kb-open, html.kb-open body { height: var(--app-h) !important; min-height: var(--app-h) !important; }
+html.kb-open .tabbar { display: none; }
+html.kb-open .has-tabbar { padding-bottom: 0; }
+.composer-wrap { padding-bottom: calc(12px + min(env(safe-area-inset-bottom, 0px), 8px)); }
+@media (min-width: 768px) { .composer-wrap { padding-bottom: 16px; } }
+html.kb-open .composer-wrap { padding-bottom: 8px; }
+html.kb-open { --tabbar-h: 0px; }
+
+/* ══ Live status under a streaming answer (LiveStatus.tsx) ══ */
+.ls-in { animation: ls-in 260ms var(--ease-spring, ease-out) both; }
+@keyframes ls-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* label with a light sweeping across, like the Claude apps */
+.ls-shimmer {
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 35%, var(--text) 50%, var(--muted) 65%, var(--muted) 100%);
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: ls-shimmer 2.2s linear infinite;
+}
+@keyframes ls-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+.ls-dot { width: 5px; height: 5px; border-radius: 9999px; background: var(--accent); animation: ls-dot 1.2s ease-in-out infinite; }
+@keyframes ls-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
+.ls-type { opacity: 0; animation: ls-type 1.6s steps(1) infinite; }
+.ls-type-2 { animation-delay: .25s; } .ls-type-3 { animation-delay: .5s; }
+@keyframes ls-type { 0% { opacity: 0; } 15% { opacity: 1; } 80% { opacity: 1; } 95% { opacity: 0; } }
+.ls-wave { animation: ls-wave 1.4s ease-in-out infinite; } .ls-wave-2 { animation-delay: .25s; }
+@keyframes ls-wave { 0%, 100% { opacity: .15; } 40% { opacity: 1; } }
+.ls-scan { animation: ls-scan 1.6s ease-in-out infinite; }
+@keyframes ls-scan { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(10px); } }
+.ls-seek { transform-origin: 12px 12px; animation: ls-seek 1.8s ease-in-out infinite; }
+@keyframes ls-seek { 0% { transform: translate(0, 0); } 25% { transform: translate(2px, -1.5px); } 50% { transform: translate(0, -3px); } 75% { transform: translate(-2px, -1.5px); } 100% { transform: translate(0, 0); } }
+.ls-pen { animation: ls-pen 1.6s ease-in-out infinite; }
+@keyframes ls-pen { 0%, 100% { transform: translateX(-3px); } 50% { transform: translateX(3px) translateY(-1px); } }
+.ls-draw { stroke-dasharray: 12; animation: ls-draw 1.6s ease-in-out infinite; }
+@keyframes ls-draw { 0% { stroke-dashoffset: 12; } 60%, 100% { stroke-dashoffset: 0; } }
+.ls-globe { transform-origin: 12px 12px; animation: ls-globe 2s linear infinite; }
+@keyframes ls-globe { 0% { transform: scaleX(1); } 50% { transform: scaleX(.1); } 100% { transform: scaleX(1); } }
+.ls-rise { animation: ls-rise 1.4s ease-in-out infinite; }
+@keyframes ls-rise { 0% { transform: translateY(2px); opacity: 0; } 40% { opacity: 1; } 100% { transform: translateY(-2px); opacity: 0; } }
+.ls-orbit { transform-origin: 12px 12px; animation: ls-orbit 1.8s linear infinite; }
+@keyframes ls-orbit { to { transform: rotate(360deg); } }
+.ls-tick { stroke-dasharray: 8; stroke-dashoffset: 8; animation: ls-tick 2s ease-out infinite; } .ls-tick-2 { animation-delay: .5s; }
+@keyframes ls-tick { 0% { stroke-dashoffset: 8; } 30%, 80% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 8; } }
+.ls-spin { animation: ls-orbit 3s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ls-in, .ls-shimmer, .ls-dot, .ls-type, .ls-wave, .ls-scan, .ls-seek, .ls-pen, .ls-draw, .ls-globe, .ls-rise, .ls-orbit, .ls-tick, .ls-spin { animation: none; }
+  .ls-shimmer { color: var(--muted); } .ls-type, .ls-tick { opacity: 1; stroke-dashoffset: 0; }
+}
+
+/* Long code wraps instead of pushing the chat wider than its 1000px column */
+.prose pre, .prose pre code { white-space: pre-wrap !important; overflow-wrap: anywhere; word-break: break-word; }
+.prose pre { overflow-x: hidden; max-width: 100%; }
+.prose code { overflow-wrap: anywhere; }
+.prose table { display: block; max-width: 100%; overflow-x: auto; }
+.wa-bubble { min-width: 0; }
+
+/* ── Extern bureaublad: Claude werkt (zelfde stijl als AIO Dashboard) ──
+   Apple-Intelligence-achtige rand in Claude-oranje die langzaam draait, met zachte gloed naar binnen. */
+.rd-glow { position: absolute; inset: 0; z-index: 6; pointer-events: none; opacity: 0; transition: opacity .7s cubic-bezier(.23, 1, .32, 1); }
+.rd-glow.aan { opacity: 1; transition-duration: .4s; }
+.rd-glow .cr-ring i { background: conic-gradient(from 0deg, #D97757, #F6B48F, #E58A62, #B8532F, #FFD9BF, #E07E55, #C2603B, #D97757); }
+.rd-glow:not(.aan) .cr-ring i, .rd-glow:not(.aan) .cr-gloed { animation-play-state: paused; }
+.rd-glow .cr-ring { position: absolute; inset: 0; border: 3px solid transparent; border-radius: inherit; overflow: hidden;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0) border-box; -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0) border-box; }
+.rd-glow .cr-ring i { position: absolute; left: 50%; top: 50%; width: 200vmax; height: 200vmax; margin: -100vmax 0 0 -100vmax; will-change: transform; animation: rdDraai 6s linear infinite; }
+.rd-glow .cr-gloed { position: absolute; inset: 0; border-radius: inherit; filter: blur(16px); opacity: .85; animation: rdAdem 2.8s cubic-bezier(.77, 0, .175, 1) infinite alternate; }
+.rd-glow .cr-gloed .cr-ring { border-width: 12px; }
+.rd-glow .cr-gloed .cr-ring i { animation-duration: 8s; animation-direction: reverse; }
+@keyframes rdDraai { to { transform: rotate(1turn); } }
+@keyframes rdAdem { from { opacity: .4; } to { opacity: .8; } }
+.rd-denk i { display: inline-block; width: 5px; height: 5px; margin: 0 1.5px; border-radius: 50%; background: var(--claude); animation: rdDenk 1.2s infinite ease-in-out; }
+.rd-denk i:nth-child(2) { animation-delay: .15s; } .rd-denk i:nth-child(3) { animation-delay: .3s; }
+@keyframes rdDenk { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rd-glow .cr-ring i, .rd-glow .cr-gloed, .rd-denk i { animation: none; } }
+
+/* ── Agent-gloed om het chatvenster (AgentGlow.tsx): rand in de kleur(en) van de agents die werken ── */
+@property --ag-a { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
+.ag-glow { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: var(--ag-radius, inherit);
+  --ag-ring-o: 1; --ag-o1: .55; --ag-o2: .85; --ag-bw: 14px; --ag-blur: 14px; --ag-rw: 3px; }
+html[data-theme="light"] .ag-glow { --ag-ring-o: .95; --ag-o1: .35; --ag-o2: .6; }
+/* per card: thickness and blur scaled to the card (a few px), radius of the card */
+.ag-glow { --ag-bw: 8px; --ag-blur: 8px; --ag-rw: 2px; }
+.dg-card > .ag-glow { --ag-radius: 3px 13px 13px 13px; }
+.wa-bubble > .ag-glow { --ag-radius: inherit; --ag-bw: 6px; --ag-blur: 6px; }
+.ag-layer { position: absolute; inset: 0; border-radius: inherit; opacity: 0; transition: opacity 1000ms cubic-bezier(.4, 0, .2, 1); animation: agDraai 8s linear infinite; }
+.ag-layer.aan { opacity: 1; transition: opacity 700ms cubic-bezier(.23, 1, .32, 1); }
+.ag-layer.een { animation: none; }
+.ag-ring { position: absolute; inset: 0; overflow: visible; border: var(--ag-rw) solid transparent; border-radius: inherit; opacity: var(--ag-ring-o);
+  background: var(--ag-grad) border-box;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0) border-box; -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0) border-box; }
+.ag-gloed { position: absolute; inset: 0; border-radius: inherit; filter: blur(var(--ag-blur)); opacity: var(--ag-o1);
+  animation: agAdem 4s cubic-bezier(.45, 0, .55, 1) infinite alternate; }
+.ag-gloed .ag-ring { border-width: var(--ag-bw); opacity: 1; }
+@keyframes agDraai { to { --ag-a: 1turn; } }
+@keyframes agAdem { from { opacity: var(--ag-o1); } to { opacity: var(--ag-o2); } }
+@media (prefers-reduced-motion: reduce) {
+  .ag-layer, .ag-layer.aan { transition-duration: 200ms; animation: none; }
+  .ag-gloed { animation: none; opacity: .36; }
+  html[data-theme="light"] .ag-gloed { opacity: .24; }
+}
+
+/* ── Laadscherm bij een geplande herstart (selfupdate) ──
+   Stijl van AIO Dashboard: wazige laag over de app die zacht in- en uitfadet. In het midden de
+   Claude-tegel van het splashscreen: het logo draait, wacht even, draait weer; de glans loopt erover. */
+.cc-loader { position: fixed; inset: 0; z-index: 95; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+  background: color-mix(in srgb, var(--g-bg-base) 45%, transparent); -webkit-backdrop-filter: blur(14px) saturate(120%); backdrop-filter: blur(14px) saturate(120%);
+  opacity: 0; transition: opacity .3s ease, transform .4s cubic-bezier(.23, 1, .32, 1); }
+.cc-loader.on { opacity: 1; }
+.cc-loader.out { opacity: 0; transform: scale(1.03); pointer-events: none; }
+.cc-loader .tile {
+  position: relative; width: 104px; height: 104px; border-radius: 28px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #2a2338, #16121f); border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 18px 50px color-mix(in srgb, var(--accent), transparent 60%);
+  animation: ccIn .6s cubic-bezier(.23, 1, .32, 1) both;
+}
+.cc-loader .tile svg { width: 62px; height: 62px; animation: ccSpin 2.8s infinite; }
+.cc-loader .tile::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 35%, rgba(255, 255, 255, .35), transparent 65%);
+  transform: translateX(-130%); animation: splashShine 1.5s ease 450ms infinite;
+}
+/* turn once (with the splash easing), rest, turn again */
+@keyframes ccSpin {
+  0% { transform: rotate(0); animation-timing-function: cubic-bezier(.23, 1, .32, 1); }
+  45%, 100% { transform: rotate(360deg); }
+}
+@keyframes ccIn { from { opacity: 0; transform: scale(.82) translateY(8px); filter: blur(6px); } }
+.cc-loader .label { font-size: 15px; font-weight: 600; color: var(--text); text-align: center; animation: ccIn .5s .1s cubic-bezier(.23, 1, .32, 1) both; }
+.cc-loader .label small { display: block; margin-top: 4px; font-size: 13px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .cc-loader .tile, .cc-loader .tile svg, .cc-loader .tile::after, .cc-loader .label { animation: none; } }
+
+/* ── Chat: rustige animaties voor activiteit en antwoord ── */
+.act-in { animation: actIn .34s cubic-bezier(.23, 1, .32, 1) both; }
+@keyframes actIn { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
+/* open/close of the tool list and each new tool line: height via grid rows, so it slides instead of jumping */
+.act-rows { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows .34s cubic-bezier(.23, 1, .32, 1), opacity .22s ease; }
+.act-rows.closed { grid-template-rows: 0fr; opacity: 0; }
+.act-rows > div, .act-row > div { overflow: hidden; min-height: 0; }
+.act-row { display: grid; grid-template-rows: 1fr; opacity: 1; transform: none;
+  transition: grid-template-rows .36s cubic-bezier(.23, 1, .32, 1), opacity .3s ease .05s, transform .36s cubic-bezier(.23, 1, .32, 1); }
+@starting-style { .act-row { grid-template-rows: 0fr; opacity: 0; transform: translateY(-6px); } }
+/* height that follows its content smoothly (SmoothHeight) */
+.smooth-h { overflow: hidden; transition: height .28s cubic-bezier(.23, 1, .32, 1); }
+/* the live answer: appears softly, new paragraphs fade in */
+.stream-in { animation: actIn .32s cubic-bezier(.23, 1, .32, 1) both; }
+.stream-prose > :last-child { animation: chunkIn .38s ease both; }
+@keyframes chunkIn { from { opacity: 0; transform: translateY(3px); } }
+/* the saved answer replacing the live one: a short cross-fade, no pop */
+.msg-still, .msg-still .wa-bubble { transition: none !important; }
+.msg-still { animation: swapIn .3s ease both; }
+@keyframes swapIn { from { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  .act-in, .stream-in, .stream-prose > :last-child, .msg-still { animation: none; }
+  .act-rows, .act-row, .smooth-h { transition: none; }
+}
+
+/* ── Versturen en antwoorden zoals iMessage ──
+   Een verstuurd bericht schuift vanuit het invoerveld omhoog naar zijn plek (lichte veer, vanuit de
+   rechteronderhoek); het antwoord begint als wolkje met drie puntjes dat uitgroeit tot de tekst. */
+.msg-sent, .msg-sent .wa-bubble { transition: none !important; }
+.msg-flying .wa-bubble { visibility: hidden; }
+/* the flight itself is done by a copy of the bubble (ChatWindow flyToBubble) */
+@keyframes msgSend {
+  from { transform: translateY(64px) scale(.86); opacity: .3; }
+  60% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.typing-bubble { padding-top: 11px; padding-bottom: 11px; }
+.typing-dots { display: inline-flex; align-items: center; gap: 5px; height: 16px; }
+.typing-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: typingDot 1.25s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay: .16s; }
+.typing-dots i:nth-child(3) { animation-delay: .32s; }
+@keyframes typingDot { 0%, 60%, 100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-3px); opacity: .95; } }
+@media (prefers-reduced-motion: reduce) { .msg-sent .wa-bubble, .typing-dots i { animation: none; } }
+
+/* ── Tijd en kopieerknop op de laatste regel van het wolkje (zoals WhatsApp) ──
+   De voet staat rechtsonder in het wolkje. De laatste tekstregel krijgt onzichtbare ruimte aan het
+   eind, zodat de tijd ernaast past; alleen als dat niet kan (codeblok, tabel, bijlagen, activiteit)
+   krijgt het wolkje onderaan wat extra ruimte. Zo geen lege regel meer onder elk bericht. */
+.wa-foot { position: relative; }
+.wa-foot-row { position: absolute; right: 9px; bottom: 5px; display: flex; align-items: center; gap: 2px; }
+.wa-foot-row .wa-time { margin-left: 2px; }
+.wa-in.wa-foot { --foot-w: 76px; }
+.wa-out.wa-foot { --foot-w: 58px; }
+.wa-body > p:last-of-type::after,
+.wa-body > .prose:nth-last-child(2) > p:last-child::after,
+.wa-body > .prose:nth-last-child(2) > :is(ul, ol):last-child > li:last-child::after {
+  content: ""; display: inline-block; width: var(--foot-w); height: 1px;
+}
+.wa-in.wa-foot:not(:has(.wa-body > .prose:nth-last-child(2) > :is(p, ul, ol):last-child)) { padding-bottom: 26px; }
+.wa-out.wa-foot:has(.wa-body > p + div:not(.wa-foot-row)) { padding-bottom: 22px; }
+
+
+/* ── Chatlijst: zoeken klapt rijen vloeiend in en uit ── */
+.conv-row { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows .32s cubic-bezier(.23, 1, .32, 1), opacity .22s ease; }
+.conv-row-hidden { grid-template-rows: 0fr; opacity: 0; }
+.conv-row > div { overflow: hidden; min-height: 0; }
+
+/* ── Bewegende achtergrond: dezelfde zachte bollen, nu losse lagen die rustig zweven en ademen ──
+   Alleen transform/opacity (GPU), heel traag; uit te zetten in Profiel. */
+.bg-orbs { display: none; }
+html.bg-motion { background: var(--g-bg-base); background-attachment: fixed; }
+html.bg-motion .bg-orbs { display: block; position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.bg-orbs i { position: absolute; display: block; border-radius: 50%; will-change: transform; animation: orbA 34s ease-in-out infinite alternate; }
+.bg-orbs i:nth-child(1) { width: 110vw; height: 100vh; left: -55vw; top: -50vh; background: radial-gradient(closest-side, var(--g-glow-1), transparent); }
+.bg-orbs i:nth-child(2) { width: 100vw; height: 110vh; right: -50vw; bottom: -55vh; background: radial-gradient(closest-side, var(--g-glow-2), transparent); animation-name: orbB; animation-duration: 41s; }
+.bg-orbs i:nth-child(3) { width: 84vw; height: 84vh; right: -30vw; top: -36vh; background: radial-gradient(closest-side, var(--g-glow-3), transparent); animation-name: orbC; animation-duration: 29s; }
+.bg-orbs i:nth-child(4) { width: 80vw; height: 80vh; left: -22vw; bottom: -32vh; background: radial-gradient(closest-side, var(--g-glow-4), transparent); animation-name: orbD; animation-duration: 37s; }
+@keyframes orbA { 0% { transform: translate(0, 0) scale(1); } 50% { transform: translate(7vw, 5vh) scale(1.12); } 100% { transform: translate(2vw, 11vh) scale(.94); } }
+@keyframes orbB { 0% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-8vw, -4vh) scale(.9); } 100% { transform: translate(-3vw, -10vh) scale(1.1); } }
+@keyframes orbC { 0% { transform: translate(0, 0) scale(.95); } 50% { transform: translate(-6vw, 7vh) scale(1.1); } 100% { transform: translate(-11vw, 2vh) scale(1); } }
+@keyframes orbD { 0% { transform: translate(0, 0) scale(1.05); } 50% { transform: translate(8vw, -6vh) scale(.92); } 100% { transform: translate(4vw, -12vh) scale(1.08); } }
+/* phones: like the still version, only the two low orbs (no haze behind the top bar) */
+@media (max-width: 767px) { .bg-orbs i:nth-child(1), .bg-orbs i:nth-child(3) { display: none; } }
+@media (prefers-reduced-motion: reduce) { .bg-orbs i { animation: none; } }
+
+/* ── Native controls follow the theme ─────────────────────────────
+   Without color-scheme the browser draws select popups, scrollbars and date pickers in the
+   light system style, so a select in dark mode opened as a white list. */
+html[data-theme="dark"], html[data-theme="dark-blue"] { color-scheme: dark; }
+html[data-theme="light"], html[data-theme="light-blue"] { color-scheme: light; }
+@layer base {
+  /* in base, so Tailwind classes on a select still win */
+  select option, select optgroup { background-color: var(--g-bg-base); color: var(--text); }
+  select { color: var(--text); }
+}
+
+/* ── @agent suggestions ───────────────────────────────────────────── */
+.mention-menu { transform-origin: bottom center; animation: mentionIn 240ms var(--ease-out) both; }
+.mention-menu[data-state="closed"] { animation: mentionOut 160ms var(--ease-out) both; pointer-events: none; }
+@keyframes mentionIn {
+  from { opacity: 0; transform: translateY(8px) scale(.96); filter: blur(2px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+@keyframes mentionOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(6px) scale(.97); }
+}
+.mention-item { animation: mentionItem 260ms var(--ease-out) both; }
+@keyframes mentionItem {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+/* the selection slides between rows */
+.mention-pill {
+  top: 0;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: transform 220ms var(--ease-out), height 220ms var(--ease-out);
+}
+
+/* a chosen @name glows in the colour of that agent (--ag, set per name; accent as fallback); new ones flare up once */
+.mention-glow {
+  --mg: var(--ag, var(--accent));
+  border-radius: 6px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: color-mix(in srgb, var(--mg) 20%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--mg) 45%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--mg) 35%, transparent);
+  animation: mentionGlow 900ms var(--ease-out) both;
+}
+.mention-glow-still { animation: none; color: color-mix(in srgb, var(--mg) 70%, var(--text)); font-weight: 500; }
+@keyframes mentionGlow {
+  0%   { background: color-mix(in srgb, var(--mg) 0%, transparent); box-shadow: 0 0 0 color-mix(in srgb, var(--mg) 0%, transparent); }
+  35%  { background: color-mix(in srgb, var(--mg) 38%, transparent); box-shadow: 0 0 18px color-mix(in srgb, var(--mg) 75%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--mg) 55%, transparent); }
+  100% { background: color-mix(in srgb, var(--mg) 20%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--mg) 45%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--mg) 35%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mention-menu, .mention-menu[data-state="closed"], .mention-item, .mention-glow { animation: none; }
+  .mention-pill { transition: none; }
+}
+
+/* recessed area inside a card (tool output, prompt preview): darker in dark mode, a faint tint in light mode */
+html[data-theme="dark"], html[data-theme="dark-blue"], :root { --well: rgba(0, 0, 0, .25); }
+html[data-theme="light"], html[data-theme="light-blue"] { --well: rgba(30, 20, 50, .05); }
+
+/* ── Status colours in light mode ─────────────────────────────────
+   The 300–500 shades are made for dark backgrounds; on the light glass they drop to ~1.7:1.
+   Light mode gets the 600–700 shade of the same hue, dark mode is unchanged. */
+html[data-theme="light"] .text-red-300, html[data-theme="light"] .text-red-400 { color: #dc2626; }
+html[data-theme="light"] .text-green-400, html[data-theme="light"] .text-green-500, html[data-theme="light"] .text-emerald-400 { color: #15803d; }
+html[data-theme="light"] .text-yellow-400, html[data-theme="light"] .text-yellow-500, html[data-theme="light"] .text-amber-300, html[data-theme="light"] .text-orange-400 { color: #b45309; }
+html[data-theme="light"] .text-sky-300 { color: #0369a1; }
+
+/* Leerlus (settings/leerlus): rows that fold away, expanding details, the budget bar, the switch */
+.ll-fold { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 300ms var(--ease-out), opacity 220ms ease; }
+.ll-fold > * { overflow: hidden; min-height: 0; }
+.ll-fold.is-shut { grid-template-rows: 0fr; opacity: 0; }
+.ll-seg { transition: width 520ms var(--ease-out), opacity 200ms ease; }
+.ll-switch { position: relative; width: 42px; height: 24px; border-radius: 999px; flex-shrink: 0;
+  background: color-mix(in srgb, var(--text) 18%, var(--g-bg-base)); transition: background-color 200ms ease; }
+.ll-switch[aria-checked="true"] { background: var(--accent); }
+.ll-switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 999px;
+  background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .25); transition: transform 240ms var(--ease-out); }
+.ll-switch[aria-checked="true"]::after { transform: translateX(18px); }
+.ll-done { transition: opacity 260ms ease, filter 260ms ease; }
+.ll-done.is-off { opacity: .45; filter: grayscale(.6); }
+@media (prefers-reduced-motion: reduce) {
+  .ll-fold, .ll-seg, .ll-switch, .ll-switch::after, .ll-done { transition: none; }
+}
+
+/* Deep link from the Swarm: the target item lights up briefly */
+.focus-flash { animation: focusFlash 2.4s var(--ease-out, ease-out) both; border-radius: 12px; }
+@keyframes focusFlash {
+  0%, 30% { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .focus-flash { animation-duration: 0s; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); } }
+
+/* Swarm (Geheugen > Swarm): canvas area, info panel and the fit button need opaque backgrounds */
+.swarm-wrap { height: clamp(380px, calc(100dvh - 300px), 820px); background: color-mix(in srgb, var(--text) 2.5%, transparent); }
+@media (max-width: 767px) { .swarm-wrap { height: clamp(360px, calc(100dvh - 330px), 640px); } }
+.swarm-panel { background: color-mix(in srgb, var(--text) 6%, var(--g-bg-base)); box-shadow: 0 12px 32px rgba(0, 0, 0, .28); animation: swarmPanelIn 260ms var(--ease-out) both; }
+.swarm-fit { background: color-mix(in srgb, var(--text) 5%, var(--g-bg-base)); }
+.swarm-chips { scrollbar-width: none; }
+.swarm-chips::-webkit-scrollbar { display: none; }
+.swarm-chip:active { transform: scale(.96); }
+.swarm-dim { background: color-mix(in srgb, var(--text) 5%, var(--g-bg-base)); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.swarm-dim-label:active { transform: scale(.94); }
+.swarm-range { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; cursor: pointer; touch-action: none; }
+.swarm-range::-webkit-slider-runnable-track { height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.swarm-range::-moz-range-track { height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.swarm-range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5.5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); transition: transform 150ms var(--ease-out); }
+.swarm-range::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.swarm-range:active::-webkit-slider-thumb { transform: scale(1.15); }
+.swarm-range:focus-visible { outline: none; }
+.swarm-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 40%, transparent); }
+@keyframes swarmPanelIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .swarm-panel { animation: swarmFade 200ms ease both; } }
+@keyframes swarmFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Live steps of an agent in its bubble */
+.agent-steps { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-step { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .65; animation: agentStepIn .28s ease-out both; }
+.agent-step-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .6; flex-shrink: 0; }
+.agent-step-now { color: var(--fg, inherit); animation: agentStepIn .28s ease-out both; }
+@keyframes agentStepIn { from { opacity: 0; transform: translateY(4px); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .agent-step, .agent-step-now { animation: none; } }
+.agent-continue-btn { padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--accent-strong); transition: transform .15s ease, filter .15s ease; }
+.agent-continue-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.agent-interrupted { animation: agentStepIn .3s ease-out both; }
+.swarm-dim-pill { background: color-mix(in srgb, var(--accent) 88%, var(--g-bg-base)); box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 35%, transparent); transition: transform 380ms cubic-bezier(.3,1.3,.5,1); }
+@media (prefers-reduced-motion: reduce) { .swarm-dim-pill { transition: none; } }
+
+/* Taken (settings/taken): wizard steps slide, statuses crossfade, switched-off tasks fade back */
+@keyframes twStepFwd { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes twStepBack { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes twFade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.tw-step-fwd { animation: twStepFwd 320ms var(--ease-out) both; }
+.tw-step-back { animation: twStepBack 320ms var(--ease-out) both; }
+.tw-fade { animation: twFade 260ms var(--ease-out) both; }
+.tw-row { background: color-mix(in srgb, var(--g-bg-base) 70%, transparent); transition: opacity 260ms ease, border-color 200ms ease; }
+.tw-row.is-off { opacity: .62; }
+@media (hover: hover) { .tw-row:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); } }
+/* the "Uitvoeren" action under a task's proposal in the chat */
+.task-action { animation: twFade 300ms var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .tw-step-fwd, .tw-step-back, .tw-fade, .task-action { animation: none; }
+  .tw-row { transition: none; }
+}
+
+/* UI #15 vervolg: secondary buttons and form fields follow the control radius (one rule, so it is
+   reversible in one commit; was rounded-lg = 8px on each element) */
+button.rounded-lg, a.rounded-lg[class*="px-"], input.rounded-lg, select.rounded-lg, textarea.rounded-lg {
+  border-radius: var(--radius-control);
+}
+
+/* UI #26: LimitNotice (design Designer). Tone via data-tone: warn (prompt, scheduled), ok (switched, resumed),
+   muted (cancelled). After its hold the card shrinks into a compact line (data-phase=line), then leaves (out). */
+.limit-notice { --ln: var(--warn); }
+.limit-notice[data-tone="ok"] { --ln: var(--ok); }
+.limit-notice[data-tone="muted"] { --ln: var(--muted); }
+.ln-outer { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 240ms var(--ease-out), opacity 200ms ease; }
+.limit-notice[data-phase="out"] .ln-outer { grid-template-rows: 0fr; opacity: 0; }
+.ln-card {
+  border: 1px solid color-mix(in srgb, var(--ln) 32%, transparent);
+  background: color-mix(in srgb, var(--ln) 9%, transparent);
+  border-radius: var(--radius-card, 14px); padding: 12px 16px;
+  transition: border-color 160ms ease, background-color 160ms ease, padding 240ms var(--ease-out);
+}
+.ln-icon { display: block; width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: var(--ln); transition: width 240ms var(--ease-out), height 240ms var(--ease-out), color 160ms ease; }
+.ln-icon > svg { width: 100%; height: 100%; }
+.ln-title { font-size: 14px; font-weight: 500; line-height: 1.4; color: var(--ln); transition: font-size 240ms var(--ease-out), color 160ms ease; }
+.ln-sub { font-size: 12px; margin-top: 2px; color: color-mix(in srgb, var(--ln) 70%, var(--muted)); }
+.ln-more { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 240ms var(--ease-out), opacity 160ms ease; }
+.limit-notice[data-phase="line"] .ln-card, .limit-notice[data-phase="out"] .ln-card { border-color: transparent; background-color: transparent; padding: 2px 4px; }
+.limit-notice[data-phase="line"] .ln-title, .limit-notice[data-phase="out"] .ln-title { font-size: 12px; font-weight: 400; color: var(--muted); }
+.limit-notice[data-phase="line"] .ln-icon, .limit-notice[data-phase="out"] .ln-icon { width: 14px; height: 14px; margin-top: 1px; color: var(--muted); }
+.limit-notice[data-phase="line"] .ln-more, .limit-notice[data-phase="out"] .ln-more { grid-template-rows: 0fr; opacity: 0; }
+.ln-btn { font-size: 12px; padding: 6px 12px; border-radius: var(--radius-control, 10px); color: var(--ln); background: color-mix(in srgb, var(--ln) 15%, transparent); transition: background-color 150ms ease, transform 150ms var(--ease-out); }
+.ln-btn:hover { background: color-mix(in srgb, var(--ln) 25%, transparent); }
+.ln-btn:active { transform: scale(.97); }
+.ln-btn:disabled { opacity: .5; }
+.ln-btn-main { background: color-mix(in srgb, var(--ln) 22%, transparent); }
+.ln-close { color: color-mix(in srgb, var(--ln) 55%, transparent); transition: color 150ms ease; }
+.ln-close:hover { color: var(--ln); }
+@media (prefers-reduced-motion: reduce) {
+  .ln-outer, .ln-more { transition: opacity 120ms ease; }
+  .ln-card, .ln-icon, .ln-title { transition: none; }
+}
+
+/* UI #27: agents talking to each other (design Designer). --ag = this agent's colour, --ag-next = the next one in a chain */
+.ag-name { color: color-mix(in srgb, var(--ag, #6366f1) 70%, var(--text)); }
+.ag-row { position: relative; --ag-rail-x: calc(1rem + 15px); }
+@media (min-width: 768px) { .ag-row { --ag-rail-x: calc(1.5rem + 15px); } }
+/* the rail runs from under this avatar to the next one (avatar 30px at a 15px root, top margin ~2px) */
+.ag-row.rail-down::after, .ag-row.rail-up::before {
+  content: ''; position: absolute; left: var(--ag-rail-x); width: 2px; margin-left: -1px; border-radius: 2px; opacity: .35;
+  transform-origin: top; animation: agRail 220ms var(--ease-out) both;
+}
+.ag-row.rail-down::after { top: 38px; bottom: 0; background: linear-gradient(var(--ag), var(--ag-next)); }
+.ag-row.rail-up::before { top: 0; height: 4px; background: var(--ag); }
+@keyframes agRail { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+/* @mention chip */
+.ag-mention {
+  display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 1px 8px 1px 2px; font-size: 12px; font-weight: 500; min-width: 0;
+  background: color-mix(in srgb, var(--ag-to, #6366f1) 16%, transparent);
+  color: color-mix(in srgb, var(--ag-to, #6366f1) 70%, var(--text));
+}
+.ag-mention-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; color: #fff; }
+.ag-ask-state { animation: agFade 160ms ease both; }
+@keyframes agFade { from { opacity: 0; } to { opacity: 1; } }
+/* one calm pulse at a time (waiting strip or a waiting clock) */
+.ag-pulse { animation: agPulse 2.4s ease-in-out infinite; }
+@keyframes agPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.typing-dots.is-still i { animation: none; opacity: .5; }
+/* clamped reports: N lines with a fade, "Toon alles" opens them */
+.ag-clamp.is-clamped { max-height: calc(var(--ag-lines, 3) * 1.65em + .5em); overflow: hidden; }
+/* the JS cuts on a whole line (max-height inline); the fade only covers about the last 1.2 line */
+.ag-clamp.has-more { -webkit-mask-image: linear-gradient(#000 calc(100% - var(--ag-fade, 1.9em)), transparent); mask-image: linear-gradient(#000 calc(100% - var(--ag-fade, 1.9em)), transparent); }
+.ag-resumed { animation: agentStepIn .3s ease-out both; }
+/* Light mode contrast (review Designer, round 3): every text in the agent conversation at least 4.5:1.
+   Incoming bubbles lighter (opaque white 72% over the base, so bubble and tail stay one colour);
+   agent colours as text darkened: 60% with black (Designer #0f6e66, Builder #6b2fa8), and with relative colour syntax
+   also capped at oklch lightness 0.52 so a light colour (yellow, lime) still reads. Chip text one step darker. */
+html[data-theme="light"] .wa-in { background: color-mix(in srgb, #fff 72%, var(--g-bg-base)); }
+html[data-theme="light"] .ag-row { --muted: #4d4560; --ok: #14632f; }
+html[data-theme="light"] .ag-name { color: color-mix(in srgb, var(--ag, #6366f1) 60%, #000); }
+html[data-theme="light"] .ag-mention {
+  background: color-mix(in srgb, var(--ag-to, #6366f1) 12%, transparent);
+  color: color-mix(in srgb, var(--ag-to, #6366f1) 53%, #000);
+}
+@supports (color: oklch(from red l c h)) {
+  html[data-theme="light"] .ag-name { color: oklch(from color-mix(in srgb, var(--ag, #6366f1) 60%, #000) min(l, 0.52) c h); }
+  html[data-theme="light"] .ag-mention { color: oklch(from color-mix(in srgb, var(--ag-to, #6366f1) 53%, #000) min(l, 0.46) c h); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ag-row.rail-down::after, .ag-row.rail-up::before, .ag-ask-state, .ag-resumed { animation: none; }
+  .ag-pulse { animation: none; opacity: 1; }
+}
+
+/* Agents trainen (settings/agents): progress track (opaque over the base), status line, knowledge block */
+.tr-track { position: relative; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text) 12%, var(--g-bg-base)); }
+.tr-fill { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); transition: width 520ms var(--ease-out); }
+.tr-fill.is-idle { width: 30% !important; animation: trSlide 1.6s var(--ease-out) infinite; }
+@keyframes trSlide { from { left: -30%; } to { left: 100%; } }
+.tr-line { animation: agFade 200ms ease both; }
+.tr-chev { transition: transform 200ms var(--ease-out); }
+.tr-chev.is-open { transform: rotate(90deg); }
+.tr-knowledge { background: color-mix(in srgb, var(--text) 4%, var(--g-bg-base)); }
+@media (prefers-reduced-motion: reduce) {
+  .tr-fill, .tr-chev { transition: none; }
+  .tr-fill.is-idle { animation: none; left: 0; opacity: .6; }
+  .tr-line { animation: none; }
+}
+
+/* ── Delegatie: een agent in zijn eigen werkplek, als kaart in het oudergesprek ──
+   Zelfde kleur- en avatarlogica als AgentBubble (--ag); dekkend vlak op --g-bg-base,
+   een dun accent links in de kleur van de agent. Statuswissels faden in, de vakken
+   (live stap, uitleg, samenvatting) schuiven open en dicht. */
+.dg-card {
+  position: relative; padding: 10px 12px 10px 14px; border-radius: 14px; border-top-left-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, var(--g-bg-base));
+  border: 1px solid color-mix(in srgb, var(--ag, #6366f1) 22%, var(--border));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--ag, #6366f1) 75%, transparent);
+  transition: border-color .3s ease, box-shadow .3s ease;
+}
+.dg-card.is-done { border-color: color-mix(in srgb, var(--ok) 26%, var(--border)); }
+.dg-card.is-failed { border-color: color-mix(in srgb, var(--bad) 30%, var(--border)); }
+.dg-pill {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; border: 1px solid transparent;
+  animation: dgPillIn .28s ease-out both;
+}
+.dg-pill.is-queued { color: var(--muted); border-color: var(--border); }
+.dg-pill.is-running { color: color-mix(in srgb, var(--ag) 70%, var(--text)); background: color-mix(in srgb, var(--ag) 14%, transparent); }
+.dg-pill.is-done { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.dg-pill.is-failed { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.dg-pill.is-interrupted { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.dg-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: dgDot 1.6s ease-in-out infinite; }
+.dg-dot.is-still { animation: none; opacity: .6; }
+@keyframes dgDot { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes dgPillIn { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
+.dg-fold { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .32s var(--ease-spring, ease), opacity .25s ease; }
+.dg-fold > div { overflow: hidden; min-height: 0; }
+.dg-fold.is-open { grid-template-rows: 1fr; opacity: 1; }
+.dg-live, .dg-summary { padding-top: 8px; }
+.dg-summary { border-top: 1px solid var(--border); margin-top: 8px; }
+.dg-open { display: inline-flex; align-items: center; gap: 4px; color: color-mix(in srgb, var(--ag, #6366f1) 70%, var(--text)); border-radius: 6px; }
+.dg-open svg { transition: transform .18s ease; }
+.dg-open:hover svg { transform: translateX(2px); }
+.dg-open:hover { text-decoration: underline; text-underline-offset: 2px; }
+.dg-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--ag, #6366f1) 60%, transparent); outline-offset: 2px; }
+html[data-theme="light"] .dg-open, html[data-theme="light"] .dg-pill.is-running { color: color-mix(in srgb, var(--ag, #6366f1) 60%, #000); }
+@media (prefers-reduced-motion: reduce) {
+  .dg-pill, .dg-dot { animation: none; }
+  .dg-fold, .dg-card, .dg-open svg { transition: none; }
+}
+/* Meekijken (#31): de kop van de kaart klapt de werkplek open in de chat; op een telefoon een bottom sheet.
+   Zelfde bubbels als in een gewoon gesprek (MessageBubble, AgentBubble, ketting), wat smaller ingesprongen. */
+.dg-toggle { display: block; text-align: left; border-radius: 10px; margin: -4px -6px; padding: 4px 6px; width: calc(100% + 12px); cursor: pointer; transition: background-color .18s ease; }
+.dg-toggle:hover { background: color-mix(in srgb, var(--ag, #6366f1) 7%, transparent); }
+.dg-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--ag, #6366f1) 60%, transparent); outline-offset: 1px; }
+.dg-card.is-watching { border-color: color-mix(in srgb, var(--ag, #6366f1) 40%, var(--border)); }
+.dg-chev { transition: transform .25s var(--ease-spring, ease); }
+.dg-chev.is-open { transform: rotate(180deg); }
+.dg-open:hover .dg-chev { transform: translateY(1px); }
+.dg-open:hover .dg-chev.is-open { transform: rotate(180deg) translateY(1px); }
+.dg-panel { margin-top: 10px; border-top: 1px solid var(--border); }
+.dg-watch { max-height: min(50vh, 440px); overflow-y: auto; overscroll-behavior: auto; padding: 6px 0 4px; margin: 0 -8px; scrollbar-width: thin; }
+.dg-watch .wa-bubble { background: color-mix(in srgb, var(--text) 12%, var(--g-bg-base)); }
+.dg-watch .px-4 { padding-left: 4px; padding-right: 4px; }
+@media (min-width: 768px) { .dg-watch .md\:px-6 { padding-left: 6px; padding-right: 6px; } }
+.dg-watch > .msg-in, .dg-watch .msg-in { animation-duration: .28s; }
+.dg-watch-note { font-size: 12px; color: var(--muted); padding: 10px 6px 10px 8px; }
+.dg-steer { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.dg-steer-row { display: flex; align-items: flex-end; gap: 6px; }
+.dg-steer-row textarea {
+  flex: 1; min-width: 0; resize: none; max-height: 120px; field-sizing: content; padding: 7px 12px; border-radius: 18px; font-size: 14px; line-height: 20px;
+  background: var(--g-bg-base); color: var(--text); border: 1px solid color-mix(in srgb, var(--text) 18%, transparent); outline: none; transition: border-color .18s ease;
+}
+.dg-steer-row textarea:focus { border-color: color-mix(in srgb, var(--ag, #6366f1) 55%, var(--border)); }
+.dg-send {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; color: #fff;
+  background: color-mix(in srgb, var(--ag, #6366f1) 85%, #000); transition: opacity .18s ease, transform .15s ease;
+}
+.dg-send:disabled { opacity: .35; }
+.dg-send:not(:disabled):active { transform: scale(.92); }
+.dg-steer-foot, .dg-foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; min-height: 22px; min-width: 0; }
+.dg-foot { margin-top: 8px; }
+.dg-links { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.dg-links > * { font-size: 12px; padding: 4px 6px; margin: -4px -6px; }
+.dg-links .dg-open { font-weight: 500; }
+.dg-steer-note { font-size: 11px; color: var(--muted); min-width: 0; }
+.dg-meta { font-size: 11px; color: var(--muted); }
+.dg-handoff { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--muted); padding: 4px 6px; margin: -4px -6px; border-radius: 6px; transition: color .18s ease; }
+.dg-handoff:hover:not(:disabled) { color: var(--text); }
+.dg-handoff:focus-visible { outline: 2px solid color-mix(in srgb, var(--ag, #6366f1) 60%, transparent); }
+.dg-menu {
+  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30; min-width: 170px; padding: 4px; border-radius: 12px;
+  border: 1px solid var(--lg-rim); box-shadow: var(--lg-shadow); isolation: isolate;
+  animation: dgMenuIn 220ms var(--ease-out) both; transform-origin: bottom right;
+}
+.dg-menu::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: var(--lg-sheen), linear-gradient(var(--lg-tint), var(--lg-tint)), color-mix(in srgb, var(--g-bg-base) 58%, transparent); -webkit-backdrop-filter: blur(28px) saturate(190%); backdrop-filter: blur(28px) saturate(190%); }
+.dg-menu-item { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: var(--text); text-align: left; }
+.dg-menu-item:hover, .dg-menu-item:focus-visible { background: color-mix(in srgb, var(--ag, #6366f1) 14%, transparent); outline: none; }
+@keyframes dgMenuIn { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+
+/* bottom sheet (telefoon) */
+.dg-sheet-wrap { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; justify-content: flex-end; }
+.dg-sheet-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / .45); animation: dgFadeIn .24s ease both; }
+.dg-sheet {
+  position: relative; display: flex; flex-direction: column; max-height: 88dvh; border-radius: 18px 18px 0 0;
+  background: var(--g-bg-base); border-top: 1px solid var(--border); box-shadow: 0 -12px 40px rgb(0 0 0 / .35);
+  padding: 6px 12px calc(10px + env(safe-area-inset-bottom)); animation: dgSheetIn .3s var(--ease-spring, cubic-bezier(.2,.8,.2,1)) both;
+}
+.dg-sheet-wrap.is-out .dg-sheet { animation: dgSheetOut .24s ease-in both; }
+.dg-sheet-wrap.is-out .dg-sheet-backdrop { animation: dgFadeOut .24s ease-in both; }
+.dg-sheet-grip { width: 36px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 22%, transparent); margin: 2px auto 8px; }
+.dg-sheet-head { display: flex; align-items: flex-start; gap: 8px; padding: 0 2px 8px; border-bottom: 1px solid var(--border); }
+.dg-sheet-x { width: 40px; height: 40px; margin: -4px -6px 0 0; display: grid; place-items: center; border-radius: 50%; color: var(--muted); flex-shrink: 0; }
+.dg-sheet-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.dg-sheet-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.dg-sheet-body .dg-watch { max-height: none; flex: 1; min-height: 120px; margin: 0 -10px; overscroll-behavior: contain; padding-top: 10px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px); mask-image: linear-gradient(to bottom, transparent, #000 12px); }
+.dg-sheet-head .dg-meta, .dg-sheet-head .text-\[11px\], .dg-sheet-head .dg-live { font-size: 12px; color: var(--muted); }
+@media (pointer: coarse) {
+  .dg-links > *, .dg-handoff { min-height: 40px; }
+  .dg-links > *, .dg-handoff { margin-top: -10px; margin-bottom: -10px; }
+  .dg-send { width: 40px; height: 40px; }
+  .dg-steer-row textarea { padding-top: 9px; padding-bottom: 9px; }
+}
+@keyframes dgSheetIn { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes dgSheetOut { from { transform: none; } to { transform: translateY(100%); } }
+@keyframes dgFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dgFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .dg-toggle, .dg-chev, .dg-send, .dg-handoff, .dg-steer-row textarea { transition: none; }
+  .dg-menu, .dg-watch .msg-in { animation: none; }
+  .dg-sheet-backdrop, .dg-sheet-wrap.is-out .dg-sheet-backdrop { animation-duration: .01s; }
+  .dg-sheet, .dg-sheet-wrap.is-out .dg-sheet { animation: dgFadeIn .15s ease both; }
+  .dg-sheet-wrap.is-out .dg-sheet { animation-name: dgFadeOut; }
+}
+
+/* Samen in de werkplek (#35): Builder vraagt Designer; in de dichte kaart "Builder + Designer" met beide gezichtjes en wie nu bezig is */
+.dg-crew { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; animation: dgCrewIn .28s ease-out both; }
+.dg-crew-faces { display: inline-flex; align-self: center; pointer-events: none; }
+/* review Designer: in de kop een effen vlakje (16 px, geen letters), ring 2 px in de kaartkleur, overlap 4 px, wie bezig is bovenop */
+.dg-face { position: relative; flex-shrink: 0; border-radius: 9999px; overflow: hidden; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 0; line-height: 1; pointer-events: none; }
+.dg-face img { width: 100%; height: 100%; object-fit: cover; }
+.dg-crew-faces .dg-face { box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 8%, var(--g-bg-base)); }
+.dg-crew-faces .dg-face + .dg-face { margin-left: -4px; }
+.dg-crew-faces .dg-face.is-top { z-index: 1; }
+.dg-crew-names { animation: dgCrewIn .28s ease-out both; }
+.dg-crew-plus { color: rgba(255, 255, 255, .6); font-size: 12px; margin: 0 0 0 5px; }
+html[data-theme="light"] .dg-crew-plus { color: rgba(0, 0, 0, .6); }
+.dg-actor { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; animation: dgCrewIn .28s ease-out both; }
+@keyframes dgCrewIn { from { opacity: 0; transform: translateX(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dg-crew, .dg-crew-names, .dg-actor { animation: none; } }
+
+/* UsageMeter: skeleton pulse while nothing is known yet (review Designer) */
+@keyframes usagePulse { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+.usage-pulse { animation: usagePulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .usage-pulse { animation: none; } }
+
+/* Meekijken: Claude-paneel schuift in en uit. Desktop: zijpaneel (breedte), mobiel: bottom sheet (translateY). */
+.rd-side { flex: none; width: 0; visibility: hidden; position: relative; transition: width .36s cubic-bezier(.23, 1, .32, 1), visibility 0s .36s; }
+.rd-side.open { width: 360px; visibility: visible; transition: width .36s cubic-bezier(.23, 1, .32, 1), visibility 0s; }
+.rd-side .pn { position: absolute; top: 0; bottom: 0; left: 0; width: 360px; opacity: 0; transition: opacity .2s ease; }
+.rd-side.open .pn { opacity: 1; transition: opacity .26s ease .04s; }
+.rd-sheet { transform: translateY(100%); visibility: hidden; transition: transform .34s cubic-bezier(.23, 1, .32, 1), visibility 0s .34s; }
+.rd-sheet.open { transform: none; visibility: visible; transition: transform .34s cubic-bezier(.23, 1, .32, 1), visibility 0s; }
+@media (prefers-reduced-motion: reduce) { .rd-side, .rd-side.open, .rd-side .pn, .rd-side.open .pn, .rd-sheet, .rd-sheet.open { transition: none; } }
+/* Meekijken: statuspil, segment, claude-accenten (transform/opacity only) */
+.rd-pil { --c: #a1a1aa; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+  color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 32%, transparent); animation: rdPil .22s cubic-bezier(.23, 1, .32, 1) both; }
+.rd-pil[data-st="live"] { --c: #22c55e; } .rd-pil[data-st="control"] { --c: #5b8cff; } .rd-pil[data-st="claude"] { --c: #D97757; }
+.rd-pil[data-st="stalled"] { --c: #f59e0b; } .rd-pil[data-st="ended"] { --c: var(--bad); }
+html[data-theme="light"] .rd-pil[data-st="live"] { --c: #15803d; } html[data-theme="light"] .rd-pil[data-st="control"] { --c: #1d4ed8; }
+html[data-theme="light"] .rd-pil[data-st="claude"] { --c: #9a4426; } html[data-theme="light"] .rd-pil[data-st="stalled"] { --c: #b45309; }
+.rd-pil.mini { height: 30px; padding: 0 12px 0 10px; color: #fff; background: rgba(0, 0, 0, .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+html .rd-pil.mini[data-st="live"] { --c: #22c55e; } html .rd-pil.mini[data-st="control"] { --c: #5b8cff; } html .rd-pil.mini[data-st="claude"] { --c: #D97757; } html .rd-pil.mini[data-st="stalled"] { --c: #f59e0b; } html .rd-pil.mini[data-st="ended"] { --c: #f87171; }
+.rd-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
+.rd-dot.pulse { animation: rdPulse 1.6s ease-in-out infinite; }
+.rd-pil:not([data-st="starting"]):not([data-st="ended"]):not([data-st="claude"]):not([data-st="stalled"]) .rd-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--c); animation: rdPuls 2.4s cubic-bezier(.23, 1, .32, 1) infinite; }
+.rd-spin { animation: rdSpin 8s linear infinite; } .rd-spin6 { animation: rdSpin 6s linear infinite; }
+.rd-seg { position: relative; display: inline-flex; padding: 2px; border-radius: 12px; border: 1px solid var(--border); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.rd-seg button { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 10px; font-size: 13px; font-weight: 600; color: color-mix(in srgb, var(--text) 72%, transparent); transition: color .2s; }
+.rd-seg button[aria-pressed="true"] { color: var(--text); } .rd-seg.bed button[aria-pressed="true"] { color: #fff; }
+.rd-seg-thumb { position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 10px; background: color-mix(in srgb, var(--text) 14%, transparent); transition: transform .28s cubic-bezier(.23, 1, .32, 1), background-color .2s; }
+.rd-seg.bed .rd-seg-thumb { transform: translateX(100%); background: #2563EB; }
+.rd-badge11 { font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.02em; border: 1.75px solid currentColor; border-radius: 5px; padding: 3px; }
+@keyframes rdSpin { to { transform: rotate(1turn); } }
+@keyframes rdPuls { from { transform: scale(1); opacity: .5; } to { transform: scale(2.6); opacity: 0; } }
+@keyframes rdPulse { 50% { opacity: .4; } }
+@keyframes rdPil { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .rd-pil, .rd-dot, .rd-dot::after, .rd-spin, .rd-spin6, .rd-seg-thumb { animation: none !important; transition: none !important; } }
+
+/* ══ Glass dropdowns: the same liquid glass as the sidebar, for every menu/popover ══
+   Background and blur sit on ::before, so a submenu inside the menu still blurs the page
+   (an element with backdrop-filter would become the backdrop root of its children). */
+.glass-menu { isolation: isolate; border: 1px solid var(--lg-rim) !important; box-shadow: var(--lg-shadow), 0 24px 48px -20px rgb(0 0 0 / .45); background: none !important; }
+.glass-menu::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: var(--lg-sheen), linear-gradient(var(--lg-tint), var(--lg-tint)), color-mix(in srgb, var(--g-bg-base) 58%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(190%); backdrop-filter: blur(28px) saturate(190%);
+}
+.glass-menu-item { border-radius: 10px; transition: background-color 140ms ease, box-shadow 140ms ease, color 140ms ease; }
+.glass-menu-item:hover:not(:disabled), .glass-menu-item:focus-visible, .glass-menu-item[data-active="true"] { background: var(--lg-sel); box-shadow: var(--lg-sel-shadow); outline: none; }
+/* open: scale in from the trigger; close: quick fade back towards it */
+.glass-menu-anim { animation: glassMenuIn 220ms var(--ease-out) both; }
+.glass-menu-anim[data-state="closed"] { animation: glassMenuOut 140ms var(--ease-out) both; pointer-events: none; }
+.glass-sub-anim { animation: glassSubIn 200ms var(--ease-out) both; }
+@keyframes glassMenuIn { from { opacity: 0; transform: translateY(-4px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes glassMenuOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-3px) scale(.97); } }
+@keyframes glassSubIn { from { opacity: 0; transform: translateX(var(--sub-from, -6px)) scale(.97); } to { opacity: 1; transform: none; } }
+.glass-menu-anim[data-up="true"] { animation-name: glassMenuInUp; }
+.glass-menu-anim[data-up="true"][data-state="closed"] { animation-name: glassMenuOutUp; }
+@keyframes glassMenuInUp { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes glassMenuOutUp { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(3px) scale(.97); } }
+/* phones: the submenu folds open inside the menu, no second glass layer */
+@media (max-width: 639px) { .glass-menu .glass-menu.max-sm\:static { border: 0 !important; box-shadow: none; } .glass-menu .glass-menu.max-sm\:static::before { display: none; } }
+@media (prefers-reduced-motion: reduce) { .glass-menu-anim, .glass-menu-anim[data-state="closed"], .glass-sub-anim { animation: none; } }

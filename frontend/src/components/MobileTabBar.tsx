@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { NavIcons, isItemActive, isNavActive, navColor } from '@/components/navItems';
+import { useTranslations } from '@/lib/i18n';
 import { useNav } from '@/components/useNav';
 import { AvatarTile } from '@/components/UserAvatar';
 import { useNavIndicator } from '@/components/useNavIndicator';
@@ -14,6 +15,7 @@ import { useNavIndicator } from '@/components/useNavIndicator';
  * sideways. Hidden inside a conversation, where the composer sits at the bottom, like WhatsApp.
  */
 export default function MobileTabBar() {
+  const t = useTranslations('sidebar');
   const pathname = usePathname() ?? '';
   const { phoneItems: items } = useNav();
   const profileOn = pathname === '/settings' || isNavActive(pathname, '/settings/profiel');
@@ -23,7 +25,7 @@ export default function MobileTabBar() {
   const activeColor = activeItem ? (activeItem.color ?? navColor(activeItem.href)) : 'var(--accent)';
 
   return (
-    <nav aria-label="Hoofdmenu" className="tabbar md:hidden">
+    <nav aria-label={t('mainMenu')} className="tabbar md:hidden">
       <div ref={ref} className="tabbar-scroll">
         {box && (
           <span aria-hidden className={clsx('tab-ind', box.animate && 'is-anim')}
@@ -47,7 +49,7 @@ export default function MobileTabBar() {
         })}
         <Link
           href="/settings/profiel"
-          aria-label="Profiel en afmelden"
+          aria-label={t('profileLogout')}
           aria-current={profileOn ? 'page' : undefined}
           className={clsx('tab-btn tab-btn-avatar', profileOn && 'tab-btn-on')}
           style={{ '--c': 'var(--accent)' } as React.CSSProperties}

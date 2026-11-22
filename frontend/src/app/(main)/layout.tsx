@@ -6,6 +6,7 @@ import Sidebar from '@/components/Sidebar';
 import MobileTabBar from '@/components/MobileTabBar';
 import PushSync from '@/components/PushSync';
 import ViewportSync from '@/components/ViewportSync';
+import LocaleSync from '@/components/LocaleSync';
 import RestartWatcher from '@/components/RestartWatcher';
 
 /**
@@ -27,6 +28,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       {tabBar && <MobileTabBar />}
       <PushSync />
       <ViewportSync />
+      <LocaleSync />
       <RestartWatcher />
     </div>
   );

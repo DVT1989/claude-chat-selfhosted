@@ -6,8 +6,6 @@ import SwRegister from '@/components/SwRegister';
 import ThemeProvider from '@/components/ThemeProvider';
 import AppSplash, { SPLASH_HEAD_SCRIPT, SPLASH_HIDE_SCRIPT } from '@/components/AppSplash';
 import splashImages from '@/components/splashImages.json';
-import nlMessages from '../../messages/nl.json';
-import enMessages from '../../messages/en.json';
 import './globals.css';
 
 // Self-hosted via next/font: no external CDN dependency, works offline/on NAS
@@ -46,9 +44,16 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const rawLocale = cookieStore.get('NEXT_LOCALE')?.value ?? 'nl';
-  const locale = ['nl', 'en'].includes(rawLocale) ? rawLocale : 'nl';
-  const messages = locale === 'en' ? enMessages : nlMessages;
+  const rawLocale = cookieStore.get('NEXT_LOCALE')?.value ?? 'en';
+  let locale = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/.test(rawLocale) ? rawLocale : 'en';
+  let extra: Record<string, unknown> | null = null;
+  if (locale !== 'en' && locale !== 'nl') {
+    // generated language: lives in the backend database, no rebuild needed
+    try {
+      const r = await fetch(`http://backend:4000/i18n/messages/${locale}`, { cache: 'no-store' });
+      if (r.ok) extra = await r.json(); else locale = 'en';
+    } catch { locale = 'en'; }
+  }
 
   return (
     <html lang={locale} data-theme="dark" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
@@ -72,7 +77,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <meta name="msapplication-TileImage" content="/icons/icon-144.png" />
       </head>
       <body className="h-full" style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}>
-        <I18nProvider messages={messages as Record<string, unknown>}>
+        <I18nProvider locale={locale} extra={extra}>
           <ThemeProvider>
             {/* soft coloured orbs that drift and breathe slowly (html.bg-motion), behind everything */}
             <div className="bg-orbs" aria-hidden><i /><i /><i /><i /></div>

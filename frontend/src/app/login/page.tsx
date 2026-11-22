@@ -51,7 +51,7 @@ function LoginForm() {
       const errAny = err as { data?: { requires_totp?: boolean }; requires_totp?: boolean };
       if (errAny?.data?.requires_totp || errAny?.requires_totp || /TOTP/i.test(msg)) {
         setNeedsTotp(true);
-        setError(needsTotp ? 'Code incorrect. Probeer opnieuw.' : '');
+        setError(needsTotp ? t('codeWrong') : '');
       } else {
         setError(msg);
       }
@@ -79,7 +79,7 @@ function LoginForm() {
         )}
 
         <div>
-          <label className="block text-sm text-(--muted) mb-1.5">Gebruikersnaam</label>
+          <label className="block text-sm text-(--muted) mb-1.5">{t('username')}</label>
           <input
             type="text"
             value={email}
@@ -92,7 +92,7 @@ function LoginForm() {
                        text-(--text) placeholder-(--muted) text-sm
                        focus:outline-none focus:border-(--accent) focus:ring-1 focus:ring-(--accent)
                        transition-colors"
-            placeholder="Gebruikersnaam"
+            placeholder={t('username')}
           />
         </div>
 
@@ -113,7 +113,7 @@ function LoginForm() {
 
         {needsTotp && (
           <div>
-            <label className="block text-sm text-(--muted) mb-1.5">Authenticator code</label>
+            <label className="block text-sm text-(--muted) mb-1.5">{t('totpLabel')}</label>
             <input
               type="text"
               inputMode="numeric"
@@ -133,7 +133,7 @@ function LoginForm() {
 
         <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
           <span>
-            <span className="block text-sm text-(--text)">Onthouden</span>
+            <span className="block text-sm text-(--text)">{t('remember')}</span>
             <span className="block text-xs text-(--muted)">90 dagen ingelogd blijven op dit apparaat</span>
           </span>
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="ios-switch" />

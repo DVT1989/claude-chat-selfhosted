@@ -17,6 +17,7 @@ import type { Message } from '@/types';
 import { attachments as attachmentsApi, models as modelsApi } from '@/lib/api';
 import type { Attachment, ModelOption } from '@/types';
 import clsx from 'clsx';
+import { useTranslations } from '@/lib/i18n';
 
 const MAX_INPUT_CHARS = 50000;
 
@@ -63,6 +64,7 @@ interface Props {
 
 // ── Activity panel shown during streaming ────────────────────
 function ActivityPanel({ tools }: { tools: ToolCall[] }) {
+  const tr = useTranslations('chat');
   const [open, setOpen] = useState(true);
   const runningCount = tools.filter(t => t.result === undefined).length;
   const doneCount = tools.filter(t => t.result !== undefined).length;
@@ -80,10 +82,10 @@ function ActivityPanel({ tools }: { tools: ToolCall[] }) {
         ) : (
           <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
         )}
-        <span className="text-(--text) font-medium">Activiteit</span>
+        <span className="text-(--text) font-medium">{tr('activity')}</span>
         <span className="text-(--muted)">
-          {tools.length === 1 ? '1 tool' : `${tools.length} tools`}
-          {isRunning && tools.length > 1 && ` · ${doneCount} van ${tools.length} klaar`}
+          {tools.length === 1 ? tr('tool') : tr('tools', { n: tools.length })}
+          {isRunning && tools.length > 1 && tr('toolsDone', { done: doneCount, n: tools.length })}
         </span>
         {/* Arrow: ► when collapsed, ▼ when open */}
         <svg className={clsx('w-3 h-3 text-(--muted) ml-auto shrink-0 transition-transform', !open && '-rotate-90')}
@@ -174,6 +176,7 @@ function partialLastId(content: string): { run: string; n: number } | null {
 
 // ── Main chat window ─────────────────────────────────────────
 export default function ChatWindow({ conversationId, initialMessages, titleOverride, headerExtra }: Props) {
+  const tr = useTranslations('chat');
   // Use a stable selector to avoid re-renders when unrelated store slices change
   // (e.g. conversations list updating from sidebar poll)
   const messages_map    = useChatStore(s => s.messages);
@@ -567,23 +570,23 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     if (err instanceof Error) {
       const msg = err.message;
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
-        return { title: 'Geen verbinding met de server', detail: 'De server is niet bereikbaar. Controleer of de service draait.' };
+        return { title: tr('noConnection'), detail: tr('noConnectionDetail') };
       }
       if (msg.includes('503') || msg.includes('502')) {
-        return { title: 'Server tijdelijk niet beschikbaar', detail: `HTTP ${msg.match(/\d{3}/)?.[0] ?? ''} — probeer het opnieuw.` };
+        return { title: tr('serverDown'), detail: tr('serverDownDetail', { code: msg.match(/\d{3}/)?.[0] ?? '' }) };
       }
       if (msg.includes('401') || msg.includes('Unauthorized')) {
-        return { title: 'Niet ingelogd', detail: 'Je sessie is verlopen. Ververs de pagina.' };
+        return { title: tr('notLoggedIn'), detail: tr('notLoggedInDetail') };
       }
       if (msg.includes('422') || msg.includes('Authenticeer') || msg.includes('Koppel eerst')) {
-        return { title: 'Claude niet gekoppeld', detail: msg };
+        return { title: tr('claudeNotLinked'), detail: msg };
       }
       if (msg.includes('404')) {
-        return { title: 'Gesprek niet gevonden', detail: 'Het gesprek bestaat niet meer.' };
+        return { title: tr('convNotFound'), detail: tr('convNotFoundDetail') };
       }
       return { title: msg };
     }
-    return { title: 'Onbekende fout', detail: String(err) };
+    return { title: tr('unknownError'), detail: String(err) };
   }
 
   async function handleScheduleResume() {
@@ -786,7 +789,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
       }
 
       case 'error': {
-        const msg = typeof data.message === 'string' ? data.message : 'Onbekende fout';
+        const msg = typeof data.message === 'string' ? data.message : tr('unknownError');
         if (isRateLimitError(msg)) {
           setRateLimitBanner({
             resetAt: null,
@@ -1196,7 +1199,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     }
     // Still offline: stop the spinner; coming back to the app syncs again
     setStreaming(false);
-    setError({ title: 'Verbinding weggevallen', detail: 'Claude werkt op de server door. Het antwoord verschijnt zodra de verbinding terug is.' });
+    setError({ title: tr('connectionLost'), detail: tr('connectionLostDetail') });
   }
 
   // Stops Claude on the server; waiting messages stay in the queue until you send again
@@ -1247,8 +1250,8 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
       {/* UI #19: header, bubbles and composer share one column (1000px, centred), so their left edges line up */}
       <div className={clsx('hidden md:flex', 'wa-chat-head shrink-0 h-14 items-center px-6 md:pr-[calc(1.5rem+var(--sbw,0px))]')}>
         <div className="w-full max-w-[1000px] mx-auto flex items-center gap-3 min-w-0">
-          <ConvAvatar id={conversationId} title={titleOverride ?? (title || 'Nieuw gesprek')} className="w-9 h-9 text-[13px]" />
-          <span className="flex-1 truncate text-[15px] font-medium text-(--text)" title={titleOverride ?? title}>{titleOverride ?? (title || 'Nieuw gesprek')}</span>
+          <ConvAvatar id={conversationId} title={titleOverride ?? (title || tr('untitled'))} className="w-9 h-9 text-[13px]" />
+          <span className="flex-1 truncate text-[15px] font-medium text-(--text)" title={titleOverride ?? title}>{titleOverride ?? (title || tr('untitled'))}</span>
           <PushBell conversationId={conversationId} />
           {headerExtra}
         </div>
@@ -1257,14 +1260,14 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
       {/* Messages — flex-1 fills space between header and input; only this div scrolls */}
       <div ref={scrollerRef} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]" style={{ WebkitOverflowScrolling: 'touch' }}>
         {/* rows carry their own px-6 side padding (1.5rem), so the column is 1000px + 3rem wide */}
-        <div role="log" aria-live="polite" aria-label="Berichten" className={clsx('w-full max-w-[calc(1000px+3rem)] mx-auto py-3', !settled && 'msgs-static')}>
+        <div role="log" aria-live="polite" aria-label={tr('messages')} className={clsx('w-full max-w-[calc(1000px+3rem)] mx-auto py-3', !settled && 'msgs-static')}>
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center h-full min-h-[60vh] gap-4 px-4">
             <h1 className="text-3xl md:text-4xl font-semibold text-(--text) text-center">
-              Hoe kan ik je helpen?
+              {tr('welcome')}
             </h1>
             <p className="text-(--muted) text-base text-center max-w-md">
-              Stel een vraag of geef een opdracht.
+              {tr('welcomeSub')}
             </p>
           </div>
         )}
@@ -1289,7 +1292,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                 className="w-full flex items-center gap-2 px-3 py-2 bg-(--input) hover:bg-(--border) transition-colors text-left"
               >
                 <span className="w-2 h-2 rounded-full bg-(--muted) animate-pulse shrink-0" />
-                <span className="text-(--muted) italic">Denkt na…</span>
+                <span className="text-(--muted) italic">{tr('thinking')}</span>
                 {/* Arrow: ► when collapsed, ▼ when open */}
                 <svg className={clsx('w-3 h-3 text-(--muted) ml-auto shrink-0 transition-transform', !thinkingExpanded && '-rotate-90')}
                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1381,7 +1384,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  Opnieuw proberen
+                  {tr('retry')}
                 </button>
               </div>
             )}
@@ -1403,13 +1406,13 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                 <span className="flex-1 min-w-0 truncate text-(--text)" title={q.content}>{q.content}</span>
                 <button type="button" onClick={() => void sendQueuedNow(q.id)}
                   className="h-7 px-2 flex items-center gap-1 rounded-lg text-xs text-(--accent) hover:bg-(--border) transition-colors shrink-0"
-                  title="Nu sturen: huidig antwoord stoppen en dit bericht direct sturen">
+                  title={tr('sendNow')}>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 19V5m0 0l-6 6m6-6l6 6" /></svg>
-                  Nu
+                  {tr('now')}
                 </button>
                 <button type="button" onClick={() => void removeQueued(q.id)}
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-(--muted) hover:text-red-400 hover:bg-(--border) transition-colors shrink-0"
-                  title="Uit wachtrij halen">
+                  title={tr('removeQueued')}>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -1471,7 +1474,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
           )}
           <textarea
             ref={textareaRef}
-            aria-label="Bericht aan Claude"
+            aria-label={tr('messageLabel')}
             value={input}
             onChange={(e) => { setInput(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
@@ -1480,7 +1483,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
             onKeyDown={handleKeyDown}
             onScroll={(e) => { if (mirrorRef.current) mirrorRef.current.scrollTop = e.currentTarget.scrollTop; }}
             onPaste={handlePaste}
-            placeholder={isStreaming ? 'Volgend bericht (komt in de wachtrij)…' : 'Antwoord Claude…'}
+            placeholder={isStreaming ? tr('placeholderQueue') : tr('placeholder')}
             rows={1}
             spellCheck={spellOn}
             lang={spellOn ? spellLang : undefined}
@@ -1494,8 +1497,8 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
             onClick={() => fileInputRef.current?.click()}
             disabled={uploadingFile}
             className="hit-44 w-8 h-8 flex items-center justify-center rounded-lg text-(--muted) hover:text-(--text) hover:bg-(--border) transition-colors shrink-0 disabled:opacity-50"
-            title="Bijlage toevoegen"
-            aria-label="Bijlage toevoegen"
+            title={tr('attach')}
+            aria-label={tr('attach')}
           >
             {uploadingFile ? (
               <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1547,8 +1550,8 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                   ? 'bg-(--accent-strong) text-white hover:brightness-95'
                   : 'bg-(--border) text-(--muted) cursor-not-allowed',
               )}
-              title={input.length > MAX_INPUT_CHARS ? 'Bericht is te lang' : isStreaming ? 'In wachtrij zetten' : 'Versturen'}
-              aria-label={isStreaming ? 'In wachtrij zetten' : 'Versturen'}
+              title={input.length > MAX_INPUT_CHARS ? tr('tooLong') : isStreaming ? tr('queue') : tr('send')}
+              aria-label={isStreaming ? tr('queue') : tr('send')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 19V5m0 0l-6 6m6-6l6 6" />
@@ -1564,7 +1567,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
               type="button"
               onClick={() => setModelMenuOpen(o => !o)}
               className="flex items-center gap-1 px-2 h-8 rounded-lg text-xs text-(--muted) hover:text-(--text) hover:bg-(--border)/60 transition-colors"
-              title="Model voor dit gesprek"
+              title={tr('modelTitle')}
             >
               <span className="max-w-[9rem] truncate">
                 {(() => {
@@ -1584,7 +1587,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                   className={`w-full text-left px-3 py-2.5 glass-menu-item text-xs border-b border-(--border) ${convModel === '' ? 'bg-(--lg-sel)' : ''}`}
                 >
                   <div className="font-medium text-(--text)">Standaard ({effectiveDefault})</div>
-                  <div className="text-(--muted) text-[11px] mt-0.5">Volg jouw instelling of systeem-default</div>
+                  <div className="text-(--muted) text-[11px] mt-0.5">{tr('modelDefaultHint')}</div>
                 </button>
                 {availableModels.filter(m => m.category === 'alias').map(m => (
                   <button key={m.id} onClick={() => changeModel(m.id)}
@@ -1595,7 +1598,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
                 ))}
                 {availableModels.filter(m => m.category === 'full').length > 0 && (
                   <div className="border-t border-(--border)">
-                    <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-(--muted)">Specifieke versies</div>
+                    <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-(--muted)">{tr('specificVersions')}</div>
                     {availableModels.filter(m => m.category === 'full').map(m => (
                       <button key={m.id} onClick={() => changeModel(m.id)}
                         className={`w-full text-left px-3 py-2 glass-menu-item text-xs ${convModel === m.id ? 'bg-(--lg-sel)' : ''}`}>

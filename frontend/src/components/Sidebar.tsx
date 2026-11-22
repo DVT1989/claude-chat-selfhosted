@@ -10,6 +10,7 @@ import { conversations as convApi, auth as authApi } from '@/lib/api';
 import UserAvatar from '@/components/UserAvatar';
 import ConversationList from '@/components/ConversationList';
 import { NavIcons, isNavActive, isItemActive, navColor, type NavItem } from '@/components/navItems';
+import { useTranslations } from '@/lib/i18n';
 import { useNav } from '@/components/useNav';
 import { useNavIndicator } from '@/components/useNavIndicator';
 
@@ -20,6 +21,7 @@ import { useNavIndicator } from '@/components/useNavIndicator';
  * on phones the rail is replaced by MobileTabBar and the list is the /chat page itself.
  */
 export default function Sidebar({ withList = true }: { withList?: boolean }) {
+  const t = useTranslations('sidebar');
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const { setConversations, setRefreshConversationId } = useChatStore();
@@ -127,7 +129,7 @@ export default function Sidebar({ withList = true }: { withList?: boolean }) {
   return (
     <aside className="hidden md:flex h-full shrink-0">
       {/* Icon rail */}
-      <nav ref={railRef} aria-label="Hoofdmenu" className="wa-rail flex flex-col items-center w-[72px] shrink-0 h-full py-2.5">
+      <nav ref={railRef} aria-label={t('mainMenu')} className="wa-rail flex flex-col items-center w-[72px] shrink-0 h-full py-2.5">
         {railBox && (
           <span aria-hidden className={clsx('rail-ind', railBox.animate && 'is-anim')}
             style={{ transform: `translateY(${railBox.y + railBox.h / 2 - 11}px)`, background: activeColor }} />
@@ -145,14 +147,14 @@ export default function Sidebar({ withList = true }: { withList?: boolean }) {
           ))}
         </div>
         <div className="rail-sep" />
-        <button onClick={() => void handleLogout()} aria-label="Afmelden" className="rail-btn rail-btn-plain rail-btn-danger" {...tipProps('Afmelden')}>
+        <button onClick={() => void handleLogout()} aria-label={t('logoutTip')} className="rail-btn rail-btn-plain rail-btn-danger" {...tipProps(t('logoutTip'))}>
           <span className="rail-tile">{NavIcons.logout('w-6 h-6')}</span>
         </button>
         <Link
           href="/settings/profiel"
-          aria-label="Profiel"
+          aria-label={t('profile')}
           className={clsx('rail-avatar mt-1', isNavActive(pathname, '/settings/profiel') && 'rail-avatar-on')}
-          {...tipProps('Profiel')}
+          {...tipProps(t('profile'))}
         >
           <UserAvatar />
         </Link>

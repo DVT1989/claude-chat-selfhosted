@@ -85,47 +85,48 @@ export function navColor(href: string): string {
 }
 export type NavGroup = { title: string; items: NavItem[] };
 
-type Labels = { profile: string; claudeCode: string; connectors: string; users: string };
+type Labels = { profile: string; claudeCode: string; connectors: string; users: string; n?: (key: string) => string };
 
 /** The settings sections; the rail shows them as icons, the phone settings screen as an iOS list. */
 export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
+  const n = l.n ?? ((k: string) => k);
   return [
     { title: 'Account', items: [
-      { href: '/settings/profiel', label: l.profile, short: 'Profiel', icon: NavIcons.profile, tint: 'bg-zinc-500' },
+      { href: '/settings/profiel', label: l.profile, short: n('profile'), icon: NavIcons.profile, tint: 'bg-zinc-500' },
     ] },
     // One rail item; the four pages are tabs inside it (see SubTabs in settings/layout.tsx)
     { title: 'Koppelingen', items: [
       // opens on the first tab (Claude Code); keeps the blue plug as its own tile
-      { href: '/settings/claude', label: 'Koppelingen', short: 'Koppelingen', icon: NavIcons.connectors, tint: 'bg-blue-500', color: '#3b82f6', children: [
-        { href: '/settings/claude', label: l.claudeCode, short: 'Claude Code', icon: NavIcons.claude, tint: 'bg-[#3a2a24]' },
-        { href: '/settings/connectors', label: l.connectors, short: 'Connectoren', icon: NavIcons.connectors, tint: 'bg-blue-500' },
-        { href: '/settings/m365', label: 'Microsoft 365', short: 'Microsoft 365', icon: NavIcons.m365, tint: 'bg-sky-600' },
-        { href: '/settings/telegram', label: 'Telegram-bot', short: 'Telegram-bot', icon: NavIcons.bot, tint: 'bg-sky-400' },
-        { href: '/settings/whatsapp', label: 'WhatsApp', short: 'WhatsApp', icon: NavIcons.whatsapp, tint: 'bg-green-500' },
-        { href: '/settings/agent', label: 'Agent installeren', short: 'Agent installeren', icon: NavIcons.devices, tint: 'bg-indigo-500' },
+      { href: '/settings/claude', label: n('connections'), short: n('connections'), icon: NavIcons.connectors, tint: 'bg-blue-500', color: '#3b82f6', children: [
+        { href: '/settings/claude', label: l.claudeCode, short: n('claudeCode'), icon: NavIcons.claude, tint: 'bg-[#3a2a24]' },
+        { href: '/settings/connectors', label: l.connectors, short: n('connectors'), icon: NavIcons.connectors, tint: 'bg-blue-500' },
+        { href: '/settings/m365', label: n('m365'), short: n('m365'), icon: NavIcons.m365, tint: 'bg-sky-600' },
+        { href: '/settings/telegram', label: n('telegram'), short: n('telegram'), icon: NavIcons.bot, tint: 'bg-sky-400' },
+        { href: '/settings/whatsapp', label: n('whatsapp'), short: n('whatsapp'), icon: NavIcons.whatsapp, tint: 'bg-green-500' },
+        { href: '/settings/agent', label: n('installAgent'), short: n('installAgent'), icon: NavIcons.devices, tint: 'bg-indigo-500' },
       ] },
     ] },
     { title: 'Uitbreidingen', items: [
       // Assistent as a group: Taken (opens first), Agents and Skills; the old addresses keep working
-      { href: '/settings/taken', label: 'Assistent', short: 'Assistent', icon: NavIcons.assistant, tint: 'bg-violet-500', color: '#8b5cf6', children: [
-        { href: '/settings/taken', label: 'Taken', short: 'Taken', icon: NavIcons.tasks, tint: 'bg-violet-500' },
-        { href: '/settings/agents', label: 'Agents', short: 'Agents', icon: NavIcons.agents, tint: 'bg-purple-500' },
-        { href: '/settings/skills', label: 'Skills', short: 'Skills', icon: NavIcons.skills, tint: 'bg-violet-500' },
+      { href: '/settings/taken', label: n('assistant'), short: n('assistant'), icon: NavIcons.assistant, tint: 'bg-violet-500', color: '#8b5cf6', children: [
+        { href: '/settings/taken', label: n('tasks'), short: n('tasks'), icon: NavIcons.tasks, tint: 'bg-violet-500' },
+        { href: '/settings/agents', label: n('agents'), short: n('agents'), icon: NavIcons.agents, tint: 'bg-purple-500' },
+        { href: '/settings/skills', label: n('skills'), short: n('skills'), icon: NavIcons.skills, tint: 'bg-violet-500' },
       ] },
       // Geheugen with the learning loop as a second tab: what was learned, skill proposals, token budget
       // Geheugen as a group: Swarm (opens first), own memory, shared knowledge (admins only, as before), learning loop
-      { href: '/settings/swarm', label: 'Geheugen', short: 'Geheugen', icon: NavIcons.memory, tint: 'bg-pink-500', color: '#ec4899', children: [
-        { href: '/settings/swarm', label: 'Swarm', short: 'Swarm', icon: NavIcons.swarm, tint: 'bg-pink-500' },
-        { href: '/settings/geheugen', label: 'Geheugen', short: 'Geheugen', icon: NavIcons.memory, tint: 'bg-pink-500' },
-        ...(isAdmin ? [{ href: '/settings/kennis', label: 'Gedeelde kennis', short: 'Gedeelde kennis', icon: NavIcons.knowledge, tint: 'bg-amber-500' }] : []),
-        { href: '/settings/leerlus', label: 'Leerlus', short: 'Leerlus', icon: NavIcons.learn, tint: 'bg-pink-500' },
+      { href: '/settings/swarm', label: n('memory'), short: n('memory'), icon: NavIcons.memory, tint: 'bg-pink-500', color: '#ec4899', children: [
+        { href: '/settings/swarm', label: n('swarm'), short: n('swarm'), icon: NavIcons.swarm, tint: 'bg-pink-500' },
+        { href: '/settings/geheugen', label: n('memory'), short: n('memory'), icon: NavIcons.memory, tint: 'bg-pink-500' },
+        ...(isAdmin ? [{ href: '/settings/kennis', label: n('sharedKnowledge'), short: n('sharedKnowledge'), icon: NavIcons.knowledge, tint: 'bg-amber-500' }] : []),
+        { href: '/settings/leerlus', label: n('learningLoop'), short: n('learningLoop'), icon: NavIcons.learn, tint: 'bg-pink-500' },
       ] },
-      { href: '/settings/apparaten', label: 'Apparaten', short: 'Apparaten', icon: NavIcons.devices, tint: 'bg-indigo-500' },
+      { href: '/settings/apparaten', label: n('devices'), short: n('devices'), icon: NavIcons.devices, tint: 'bg-indigo-500' },
     ] },
     ...(isAdmin ? [{ title: ADMIN_GROUP, items: [
-      { href: '/settings/adminprompt', label: 'Admin-chat', short: 'Admin', icon: NavIcons.terminal, tint: 'bg-slate-600' },
-      { href: '/settings/admin', label: l.users, short: 'Gebruikers', icon: NavIcons.users, tint: 'bg-emerald-500' },
-      { href: '/settings/backups', label: 'Backups', short: 'Backups', icon: NavIcons.backups, tint: 'bg-teal-500' },
+      { href: '/settings/adminprompt', label: n('adminChat'), short: n('adminShort'), icon: NavIcons.terminal, tint: 'bg-slate-600' },
+      { href: '/settings/admin', label: l.users, short: n('users'), icon: NavIcons.users, tint: 'bg-emerald-500' },
+      { href: '/settings/backups', label: n('backups'), short: n('backups'), icon: NavIcons.backups, tint: 'bg-teal-500' },
     ] }] : []),
   ];
 }
@@ -133,8 +134,8 @@ export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
 export const ADMIN_GROUP = 'Beheer';
 
 /** Phones: the admin sections behind one tab, opening the Admin tools overview. */
-export function adminToolsItem(children: NavItem[]): NavItem {
-  return { href: '/settings/beheer', label: 'Admin tools', short: 'Admin tools', icon: NavIcons.shield, tint: 'bg-slate-600', color: '#64748b', children };
+export function adminToolsItem(children: NavItem[], n: (key: string) => string = (k) => k): NavItem {
+  return { href: '/settings/beheer', label: n('adminTools'), short: n('adminTools'), icon: NavIcons.shield, tint: 'bg-slate-600', color: '#64748b', children };
 }
 
 export function isNavActive(pathname: string, href: string): boolean {

@@ -18,9 +18,10 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const user = useAuthStore((s) => s.user);
   const pathname = usePathname() ?? '';
   const t = useTranslations('settings.layout');
+  const n = useTranslations('nav');
 
   const groups = settingsGroups(
-    { profile: t('profile'), claudeCode: t('claudeCode'), connectors: t('connectors'), users: t('users') },
+    { profile: t('profile'), claudeCode: t('claudeCode'), connectors: t('connectors'), users: t('users'), n },
     user?.role === 'admin',
   );
 
@@ -50,7 +51,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
       {!ownHeader && (
         <MobileTopBar
-          title={isAdminTools ? 'Admin tools' : (currentChild?.label ?? current?.label ?? t('title'))}
+          title={isAdminTools ? n('adminTools') : (currentChild?.label ?? current?.label ?? t('title'))}
           back={isAdminSection ? { href: '/settings/beheer', label: 'Terug naar Admin tools' } : undefined}
         />
       )}

@@ -61,6 +61,12 @@ function isRead(init?: RequestInit): boolean {
 }
 
 // ── Auth ──────────────────────────────────────────────────────
+export const i18nApi = {
+  languages: () => request<{ languages: { code: string; name: string }[] }>('/i18n/languages', { cache: 'no-store' }),
+  generate: (language: string) => request<{ jobId: string }>('/i18n/generate', { method: 'POST', body: JSON.stringify({ language }) }),
+  job: (id: string) => request<{ status: 'running' | 'done' | 'error'; done: number; total: number; code?: string; name?: string; error?: string; fallbackKeys: number }>(`/i18n/jobs/${id}`, { cache: 'no-store' }),
+};
+
 export const auth = {
   login: (email: string, password: string, totp_code?: string, remember = true) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, remember, ...(totp_code ? { totp_code } : {}) }) }),

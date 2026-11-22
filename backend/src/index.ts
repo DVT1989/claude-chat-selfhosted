@@ -10,6 +10,8 @@ import { config } from './config';
 import { pool } from './db';
 import { redis } from './redis';
 import { authRouter } from './routes/auth';
+import { i18nRouter } from './routes/i18n';
+import { ensureTranslationsTable } from './services/i18n';
 import { conversationsRouter } from './routes/conversations';
 import { streamRouter, resumeQueues, resumeAfterRestart } from './routes/stream';
 import { ensureQueueSchema } from './services/messageQueue';
@@ -162,6 +164,7 @@ app.use(rateLimit({
 
 // ── Routes ────────────────────────────────────────────────────
 app.use('/auth', authRouter);
+app.use('/i18n', i18nRouter);
 app.use('/conversations', conversationsRouter);
 app.use('/conversations', streamRouter);
 app.use('/claude-auth', claudeAuthRouter);
@@ -204,6 +207,7 @@ async function start() {
 
   // Run pending migrations
   try {
+    await ensureTranslationsTable();
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversation_attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

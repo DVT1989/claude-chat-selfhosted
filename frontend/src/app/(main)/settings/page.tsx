@@ -1,5 +1,6 @@
 'use client';
 
+import LanguagePicker from '@/components/LanguagePicker';
 import { useState, FormEvent, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/lib/store';
 import { auth as authApi, models as modelsApi, totp as totpApi, push as pushApi } from '@/lib/api';
@@ -55,7 +56,6 @@ export default function ProfileSettings() {
   const [themeMode, setThemeMode] = useState<ThemeMode>((user?.theme_mode as ThemeMode) ?? 'system');
   const [accentColor, setAccentColor] = useState<string>(user?.accent_color ?? DEFAULT_ACCENT);
   const [hexInput, setHexInput] = useState<string>(user?.accent_color ?? DEFAULT_ACCENT);
-  const [selectedLanguage, setSelectedLanguage] = useState(user?.language ?? 'nl');
   const [selectedModel, setSelectedModel] = useState<string>(user?.default_model ?? '');
   const [spellOn, setSpellOn] = useState(user?.preferences?.spellcheck !== false);
   const [spellLang, setSpellLang] = useState<'nl' | 'en' | 'auto'>(user?.preferences?.spell_lang ?? 'nl');
@@ -276,7 +276,6 @@ export default function ProfileSettings() {
       const res = await authApi.updateProfile({
         name: name || undefined,
         ...(newPw ? { password: newPw, currentPassword: currentPw } : {}),
-        language: selectedLanguage !== user?.language ? selectedLanguage : undefined,
         theme_mode: themeMode !== user?.theme_mode ? themeMode : undefined,
         accent_color: accentColor !== (user?.accent_color ?? DEFAULT_ACCENT) ? accentColor : undefined,
         avatar: avatarPreview !== user?.avatar ? (avatarPreview ?? null) : undefined,
@@ -342,14 +341,7 @@ export default function ProfileSettings() {
         <hr className="border-(--border)" />
 
         {/* Language */}
-        <div>
-          <label className="block text-sm text-(--muted) mb-1.5">{t('language')}</label>
-          <select value={selectedLanguage} onChange={(e) => setSelectedLanguage(e.target.value)}
-            className="w-full bg-(--input) border border-(--border) rounded-lg px-4 py-3 text-(--text) text-sm focus:outline-none focus:border-(--accent)">
-            <option value="nl">{t('languages.nl')}</option>
-            <option value="en">{t('languages.en')}</option>
-          </select>
-        </div>
+        <LanguagePicker />
 
         {/* Spelling check in the chat composer */}
         <div>

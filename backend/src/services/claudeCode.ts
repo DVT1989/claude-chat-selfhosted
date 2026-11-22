@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from 'child_process';
+import { languageLabel } from './i18n';
 import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { randomBytes, createHash } from 'crypto';
@@ -112,7 +113,7 @@ const MAIN_CLAUDE_RULES = `\
 `;
 
 const ADMIN_PROJECT_CLAUDE_MD = (databaseUrl: string, workspacePath: string, language = 'nl', werkplek = false) => `\
-${BEHAVIOR_RULES}${language === 'en' ? 'Always respond in English.' : 'Always respond in Dutch.'}
+${BEHAVIOR_RULES}Always respond in ${languageLabel(language)}.
 
 # Claude Chat — Backend Code Werkruimte
 
@@ -999,7 +1000,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
 
   const lines: string[] = [];
   if (language) {
-    const langLabel = language === 'en' ? 'English' : 'Dutch';
+    const langLabel = languageLabel(language);
     lines.push(`Always respond in ${langLabel}.`, '');
   }
   lines.push(
@@ -1425,7 +1426,7 @@ export async function runTask(
   } else if (connectors?.length) {
     coreStats = setupConnectors(userId, connectors, language);
   } else if (language && !workspace.includes('_admin-')) {
-    const langLabel = language === 'en' ? 'English' : 'Dutch';
+    const langLabel = languageLabel(language);
     const claudeMdPath = join(workspace, 'CLAUDE.md');
     writeFileSync(claudeMdPath, BEHAVIOR_RULES + SAFETY_RULES + `Always respond in ${langLabel}.\n` + historyNote(workspace), { mode: 0o644 });
     chownSync(claudeMdPath, CLAUDE_UID, CLAUDE_GID);

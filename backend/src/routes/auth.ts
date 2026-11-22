@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { isKnownLanguage } from '../services/i18n';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -206,7 +207,7 @@ authRouter.put('/me', requireAuth, async (req: Request, res: Response, next) => 
       name: z.string().min(1).max(255).optional(),
       password: z.string().min(8).max(128).optional(),
       currentPassword: z.string().optional(),
-      language: z.enum(['nl', 'en']).optional(),
+      language: z.string().regex(/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/).optional(),
       avatar: z.string().max(150_000).optional().nullable(),
       theme: z.enum(['dark', 'dark-blue', 'light', 'light-blue']).optional(),
       default_model: z.string().max(64).nullable().optional(),
@@ -248,6 +249,7 @@ authRouter.put('/me', requireAuth, async (req: Request, res: Response, next) => 
       }
       updates.push(`avatar = $${idx++}`); values.push(body.avatar);
     }
+    if (body.language !== undefined && !(await isKnownLanguage(body.language))) throw new AppError(400, 'Onbekende taal');
     if (body.language !== undefined) { updates.push(`language = $${idx++}`); values.push(body.language); }
     if (body.theme !== undefined) { updates.push(`theme = $${idx++}`); values.push(body.theme); }
     if (body.default_model !== undefined) { updates.push(`default_model = $${idx++}`); values.push(body.default_model); }

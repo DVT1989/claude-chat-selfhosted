@@ -10,7 +10,6 @@ interface ListResponse { devices: Device[]; settings: { requireTotp: boolean }; 
 export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged }: { mode?: 'full' | 'add' | 'manage'; onlyId?: string; onChanged?: () => void } = {}) {
   const [data, setData] = useState<ListResponse | null>(null);
   const [enroll, setEnroll] = useState<Enroll | null>(null);
-  const [totp, setTotp] = useState('');
   const [open, setOpen] = useState(mode === 'add');
   const [err, setErr] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
@@ -23,7 +22,6 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
   useEffect(() => { void load(); }, [load]);
 
   const browsers = (data?.devices ?? []).filter((d) => d.os === 'browser' && (!onlyId || d.id === onlyId));
-  const needTotp = !!data?.totpEnabled && !!data?.settings.requireTotp;
 
   // While a code is open: close it as soon as a new browser shows up
   useEffect(() => {
@@ -37,11 +35,16 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enroll]);
 
-  async function makeCode() {
+  async function makeCode(): Promise<boolean> {
     setErr('');
-    try { setEnroll(await api<Enroll>('/enroll-code', { method: 'POST', body: JSON.stringify({ totp_code: totp }) })); setTotp(''); }
-    catch (e) { setErr((e as Error).message); }
+    try { setEnroll(await api<Enroll>('/enroll-code', { method: 'POST', body: JSON.stringify({}) })); return true; }
+    catch (e) { setErr((e as Error).message); return false; }
   }
+  // opening 'add' makes the code at once
+  useEffect(() => {
+    if (open && !enroll && data) void makeCode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, !!data]);
 
   async function rename(id: string) {
     const name = editName.trim();
@@ -108,18 +111,6 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
             <li>Kies Uitgepakte extensie laden en selecteer de map. Klaar, geen code typen.</li>
             <li>Updates: de extensie meldt zelf een nieuwe versie. Pak die uit over dezelfde map en klik op vernieuwen.</li>
           </ol>
-          <div className="flex flex-wrap items-end gap-3">
-            {!enroll && <a href="/api/devices/download/browser-extension.zip" className={`${ghost} inline-block`}>Zonder code downloaden</a>}
-            {!enroll && needTotp && (
-              <label className="block">
-                <span className="block text-xs text-(--muted) mb-1">TOTP-code</span>
-                <input value={totp} onChange={(e) => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && totp.length === 6) void makeCode(); }}
-                  className="w-32 bg-(--bg) border border-(--border) rounded-lg px-3 py-2 text-sm text-(--text) tracking-widest outline-none focus:border-(--accent)" />
-              </label>
-            )}
-            {!enroll && <button className={primary} disabled={needTotp && totp.length !== 6} onClick={() => void makeCode()}>Koppelcode maken</button>}
-          </div>
           {enroll && (
             <div>
               <div className="text-xs text-(--muted)">Koppelcode, geldig tot {new Date(enroll.expiresAt).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -127,6 +118,7 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
               <a href={`/api/devices/download/browser-extension.zip?code=${encodeURIComponent(enroll.code)}`} className={`${primary} inline-block mt-2 motion-safe:animate-[ccFadeIn_.2s_ease-out]`}>Extensie downloaden (koppelt zichzelf)</a>
               <style>{'@keyframes ccFadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}'}</style>
               <div className="flex items-center gap-2 text-xs text-(--muted) mt-1"><span className="w-2 h-2 rounded-full bg-(--accent) animate-pulse" /> Wacht op de browser…</div>
+              <a href="/api/devices/download/browser-extension.zip" className="inline-block mt-2 text-xs text-(--accent) hover:underline">Of zonder code downloaden (update)</a>
             </div>
           )}
           {err && <div className="text-xs text-red-400">{err}</div>}

@@ -1,3 +1,7 @@
+# Fixed project name: container names (claude-chat-backend-1, ...), volumes and selfupdate depend on it,
+# whatever the folder is called.
+name: claude-chat
+
 services:
   nginx:
     image: nginx:stable-alpine

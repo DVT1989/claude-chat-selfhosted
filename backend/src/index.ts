@@ -23,6 +23,8 @@ import { devicesRouter, resumeDeviceTasks } from './routes/devices';
 import { ensureNasPasswordTables } from './services/nasPasswords';
 import { remoteRouter } from './routes/remote';
 import { lessonsRouter } from './routes/lessons';
+import { federationRouter } from './routes/federation';
+import { ensureFederationSchema, startFederationScheduler } from './services/federation';
 import { agentsRouter } from './routes/agents';
 import { memoryRouter } from './routes/memory';
 import { ensureMemorySchema } from './services/memory';
@@ -48,13 +50,16 @@ import { claudeAiRouter } from './routes/claudeAi';
 import { attachmentsRouter } from './routes/attachments';
 import { modelsRouter, startModelRefresh } from './routes/models';
 import { skillsRouter } from './routes/skills';
+import { groupsRouter } from './routes/groups';
 import { totpRouter } from './routes/totp';
 import { pushRouter } from './routes/push';
 import { telegramRouter } from './routes/telegram';
+import { telegramBotsRouter } from './routes/telegramBots';
 import { m365Router } from './routes/m365';
 import { googleRouter } from './routes/google';
 import { ensureSettingsTable } from './services/googleSearchConsole';
 import { startTelegram, ensureTelegramSchema } from './services/telegram/manager';
+import { startAgentBots, ensureAgentBotSchema } from './services/telegram/agentBots';
 import { whatsappRouter } from './routes/whatsapp';
 import { messengerRouter } from './routes/messenger';
 import cron from 'node-cron';
@@ -161,6 +166,9 @@ app.post('/internal/learn-backfill', async (req, res) => {
 // Remote desktop: many small requests per second (frames, input), own auth per route
 app.use('/devices/remote', remoteRouter);
 
+// Federation: own rate limit, own auth (API key or admin)
+app.use('/federation', federationRouter);
+
 // ── General rate limiting ─────────────────────────────────────
 app.use(rateLimit({
   windowMs: 60 * 1000,
@@ -185,9 +193,11 @@ app.use('/claude-ai', claudeAiRouter);
 app.use('/conversations', attachmentsRouter);
 app.use('/models', modelsRouter);
 app.use('/skills', skillsRouter);
+app.use('/groups', groupsRouter);
 app.use('/auth/totp', totpRouter);
 app.use('/push', pushRouter);
 app.use('/telegram', telegramRouter);
+app.use('/telegram-bots', telegramBotsRouter);
 app.use('/whatsapp', whatsappRouter);
 app.use('/messenger', messengerRouter);
 app.use('/m365', m365Router);
@@ -295,6 +305,7 @@ async function start() {
     await ensureDeviceSchema();
     await ensureLessonsSchema();
     await ensureAgentsSchema();
+    await ensureAgentBotSchema(); // after agents: it references them
     await ensureMemorySchema();
     await ensureHistorySchema();
     await ensureContextSchema();
@@ -302,6 +313,7 @@ async function start() {
     await ensureTasksSchema();
     await ensureDelegationsSchema();
     await ensureInsightsSchema();
+    await ensureFederationSchema();
     console.log('✓ Migrations applied');
     // Claude runs as a child of this process, so any stream still flagged at boot died with the previous process.
     const orphaned = await pool.query<{ conversation_id: string; id: string; created_at: Date }>(
@@ -352,6 +364,7 @@ async function start() {
 
   startScheduler();
   startTaskScheduler();
+  startFederationScheduler();
   startDelegations();
   void resumeQueues();
   // the conversation that started a selfupdate continues by itself and checks the rollout (no "typ verder")
@@ -360,6 +373,7 @@ async function start() {
   void resumeDeviceTasks();
   startModelRefresh();
   void startTelegram();
+  void startAgentBots();
   void startWhatsApp();
   startLearning();
 

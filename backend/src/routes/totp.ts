@@ -17,8 +17,15 @@ const guardrails = createGuardrails({ MIN_SECRET_BYTES: 10 });
 
 const APP_NAME = 'Claude Chat';
 
+// Changing the second factor ends every session, this one included: everyone signs in again (with TOTP).
+async function revokeAllSessions(res: Response, userId: string): Promise<void> {
+  await sessions.delAll(userId);
+  await query('DELETE FROM sessions WHERE user_id = $1', [userId]).catch(() => {});
+  res.clearCookie('auth_token');
+}
+
 // Kick every other device but keep the current session, so the settings page keeps working.
-async function revokeOtherSessions(req: Request, userId: string): Promise<void> {
+export async function revokeOtherSessions(req: Request, userId: string): Promise<void> {
   const token = req.cookies?.auth_token ?? req.headers.authorization?.replace('Bearer ', '');
   if (!token) {
     await sessions.delAll(userId);
@@ -79,10 +86,10 @@ totpRouter.post('/enable', async (req: Request, res: Response, next) => {
       'UPDATE users SET totp_secret = pending_totp_secret, totp_enabled = TRUE, pending_totp_secret = NULL WHERE id = $1',
       [userId],
     );
-    // Force re-login on every other device so the new factor is required there; this session stays valid.
-    await revokeOtherSessions(req, userId);
+    // Sign out everywhere (this session too): the next login asks for the new factor.
     await auditLog(userId, 'user.totp.enable', 'user', userId, req.ip ?? '', {});
-    res.json({ ok: true });
+    await revokeAllSessions(res, userId);
+    res.json({ ok: true, loggedOut: true });
   } catch (err) {
     next(err);
   }
@@ -106,10 +113,10 @@ totpRouter.post('/disable', async (req: Request, res: Response, next) => {
       'UPDATE users SET totp_enabled = FALSE, totp_secret = NULL, pending_totp_secret = NULL WHERE id = $1',
       [userId],
     );
-    // Disabling 2FA is a sensitive change: kick all other devices; this session stays valid.
-    await revokeOtherSessions(req, userId);
+    // Disabling 2FA is a sensitive change: sign out everywhere, this session too.
     await auditLog(userId, 'user.totp.disable', 'user', userId, req.ip ?? '', {});
-    res.json({ ok: true });
+    await revokeAllSessions(res, userId);
+    res.json({ ok: true, loggedOut: true });
   } catch (err) {
     next(err);
   }

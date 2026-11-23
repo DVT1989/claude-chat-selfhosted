@@ -723,18 +723,6 @@ app.put('/settings', async (req: Request, res: Response, next: NextFunction) => 
 app.post('/enroll-code', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.userId;
-    const u = (await query<{ totp_enabled: boolean; totp_secret: string | null }>(
-      'SELECT totp_enabled, totp_secret FROM users WHERE id = $1', [userId])).rows[0];
-    const { requireTotp } = await dev.getSettings(userId);
-    if (requireTotp && u?.totp_enabled && u.totp_secret) {
-      const code = String(req.body?.totp_code ?? '').replace(/\s/g, '');
-      if (!code) throw new AppError(403, 'TOTP-code nodig');
-      const { verify, createGuardrails } = await import('otplib');
-      let secret: string;
-      try { secret = decrypt(u.totp_secret); } catch { secret = u.totp_secret; }
-      const ok = (await verify({ token: code, secret, epochTolerance: 30, guardrails: createGuardrails({ MIN_SECRET_BYTES: 10 }) })).valid;
-      if (!ok) throw new AppError(403, 'TOTP-code onjuist');
-    }
     const out = await dev.createEnrollCode(userId);
     await auditLog(userId, 'device.enroll_code', 'device', null, ipOf(req), {});
     const server = appUrl();

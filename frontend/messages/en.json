@@ -206,6 +206,7 @@
     "adminShort": "Admin",
     "users": "Users",
     "backups": "Backups",
+    "groups": "Groups",
     "adminTools": "Admin tools"
   },
   "conversations": {

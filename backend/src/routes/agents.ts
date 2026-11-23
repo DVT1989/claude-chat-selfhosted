@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
-import { requireAuth, auditLog } from '../middleware/auth';
+import { requireAuth, requireAdmin, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
-import { listAgents, uniqueSlug, createAgent, assistPrompt, ASSIST_SYSTEM } from '../services/agents';
+import { listAgents, agentView, setAgentSharing, setSharedAgentActive, uniqueSlug, createAgent, assistPrompt, ASSIST_SYSTEM } from '../services/agents';
 import { runStructured } from '../services/claudeCode';
 import { startTraining, trainingStatus, setKnowledge, revertKnowledge } from '../services/agentTraining';
 import { userForMemoryToken } from '../services/memory';
@@ -105,7 +105,40 @@ const agentSchema = z.object({
 });
 
 agentsRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json({ agents: await listAgents(req.user!.userId) }); } catch (err) { next(err); }
+  try { res.json({ agents: agentView(req.user!.userId, await listAgents(req.user!.userId)) }); } catch (err) { next(err); }
+});
+
+// Admins: who may use one of their own agents; plus the users and groups to pick from
+agentsRouter.get('/share-targets', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const users = await query<{ id: string; name: string }>('SELECT id, name FROM users WHERE is_active AND id <> $1 ORDER BY name', [req.user!.userId]);
+    const groups = await query<{ id: string; name: string }>('SELECT id, name FROM user_groups ORDER BY name');
+    res.json({ users: users.rows, groups: groups.rows });
+  } catch (err) { next(err); }
+});
+
+agentsRouter.put('/:id/share', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId, id = String(req.params.id);
+    const b = z.object({
+      visibility: z.enum(['private', 'selected', 'all']),
+      users: z.array(z.string().uuid()).max(200).default([]),
+      groups: z.array(z.string().uuid()).max(50).default([]),
+    }).parse(req.body);
+    await setAgentSharing(userId, id, b);
+    await auditLog(userId, 'agent.share', 'agent', id, req.ip ?? '', { visibility: b.visibility, users: b.users.length, groups: b.groups.length });
+    res.json({ agents: agentView(userId, await listAgents(userId)) });
+  } catch (err) { next(err); }
+});
+
+// A shared agent can be switched on or off for yourself only
+agentsRouter.put('/:id/mine', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId;
+    const b = z.object({ is_active: z.boolean() }).parse(req.body);
+    await setSharedAgentActive(userId, String(req.params.id), b.is_active);
+    res.json({ agents: agentView(userId, await listAgents(userId)) });
+  } catch (err) { next(err); }
 });
 
 agentsRouter.post('/', async (req: Request, res: Response, next: NextFunction) => {
@@ -114,7 +147,7 @@ agentsRouter.post('/', async (req: Request, res: Response, next: NextFunction) =
     const userId = req.user!.userId;
     const id = await createAgent(userId, b);
     await auditLog(userId, 'agent.create', 'agent', id, req.ip ?? '', { name: b.name });
-    res.status(201).json({ agents: await listAgents(userId) });
+    res.status(201).json({ agents: agentView(userId, await listAgents(userId)) });
   } catch (err) { next(err); }
 });
 
@@ -132,7 +165,7 @@ agentsRouter.put('/:id', async (req: Request, res: Response, next: NextFunction)
       [b.name, slug, b.description, b.prompt, b.model, b.avatar ?? null, b.color, b.is_active, id, userId,
        b.account_slots?.length ? [...new Set(b.account_slots)].sort((x, y) => x - y) : null]);
     await auditLog(userId, 'agent.update', 'agent', id, req.ip ?? '', { name: b.name });
-    res.json({ agents: await listAgents(userId) });
+    res.json({ agents: agentView(userId, await listAgents(userId)) });
   } catch (err) { next(err); }
 });
 
@@ -142,7 +175,7 @@ agentsRouter.delete('/:id', async (req: Request, res: Response, next: NextFuncti
     const r = await query('DELETE FROM agents WHERE id = $1 AND user_id = $2', [String(req.params.id), userId]);
     if (!r.rowCount) throw new AppError(404, 'Agent niet gevonden');
     await auditLog(userId, 'agent.delete', 'agent', String(req.params.id), req.ip ?? '', {});
-    res.json({ agents: await listAgents(userId) });
+    res.json({ agents: agentView(userId, await listAgents(userId)) });
   } catch (err) { next(err); }
 });
 

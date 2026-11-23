@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { agentsApi, claudeAuth, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining, type ClaudeAccountInfo } from '@/lib/api';
+import { agentsApi, claudeAuth, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining, type ClaudeAccountInfo, type ShareTargets } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 import { Bar, time as fmtTime } from '@/components/ClaudeAccounts';
 import clsx from 'clsx';
 import { AgentAvatar, setAgentsCache } from '@/components/chat/AgentBubble';
@@ -304,6 +305,91 @@ function TrainPanel({ agent }: { agent: AgentDef }) {
   );
 }
 
+
+/** Admins: who may use this agent. Saves on every change; shared agents run with each user's own account. */
+function SharePanel({ agent, onChange }: { agent: AgentDef; onChange: (list: AgentDef[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [targets, setTargets] = useState<ShareTargets | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const vis = agent.visibility ?? 'private';
+  const users = agent.share_users ?? [], groups = agent.share_groups ?? [];
+
+  useEffect(() => { if (open && !targets) agentsApi.shareTargets().then(setTargets).catch((e) => setErr((e as Error).message)); }, [open, targets]);
+
+  async function save(v: 'private' | 'selected' | 'all', u: string[], g: string[]) {
+    setBusy(true); setErr('');
+    try { onChange((await agentsApi.share(agent.id, v, u, g)).agents); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  const flip = (arr: string[], id: string) => (arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
+  const summary = vis === 'all' ? 'Gedeeld met iedereen'
+    : vis === 'selected' ? `Gedeeld met ${[users.length && `${users.length} ${users.length === 1 ? 'gebruiker' : 'gebruikers'}`, groups.length && `${groups.length} ${groups.length === 1 ? 'groep' : 'groepen'}`].filter(Boolean).join(' en ') || 'niemand (nog niets gekozen)'}`
+    : 'Alleen ik';
+  const seg = (on: boolean) => clsx('flex-1 px-3 py-1.5 rounded-lg text-sm transition-colors duration-200 disabled:opacity-60',
+    on ? 'bg-(--accent-strong) text-white shadow-sm' : 'text-(--muted) hover:text-(--text)');
+  const chip = (on: boolean) => clsx('min-h-11 rounded-xl border px-3 py-2 cursor-pointer transition-colors duration-200 flex items-center gap-2 text-sm text-(--text)',
+    on ? 'border-(--accent) bg-(--accent)/10' : 'border-(--border) bg-(--bg) hover:border-(--accent)/50');
+
+  return (
+    <div className="px-4 pb-3 -mt-1">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="tr-line flex items-center gap-1.5 text-xs text-(--muted) hover:text-(--text) transition-colors">
+        <svg className={clsx('tr-chev w-3.5 h-3.5', open && 'is-open')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+        Delen: {summary}
+      </button>
+      <div className={clsx('ll-fold', !open && 'is-shut')}>
+        <div>
+          <div className="space-y-2 pt-2">
+            <div className="flex gap-1 p-1 rounded-xl border border-(--border) bg-(--bg) max-w-md" role="radiogroup" aria-label="Zichtbaarheid">
+              {([['private', 'Alleen ik'], ['selected', 'Kiezen'], ['all', 'Iedereen']] as const).map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={vis === v} disabled={busy} className={seg(vis === v)}
+                  onClick={() => vis !== v && void save(v, users, groups)}>{label}</button>
+              ))}
+            </div>
+            <div className={clsx('ll-fold', vis !== 'selected' && 'is-shut')}>
+              <div className="space-y-2">
+                {!targets && !err && <div className="h-11 rounded-xl bg-(--bg) animate-pulse" />}
+                {targets && !!targets.groups.length && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-(--muted)">Groepen</span>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {targets.groups.map((g) => (
+                        <label key={g.id} className={chip(groups.includes(g.id))}>
+                          <input type="checkbox" checked={groups.includes(g.id)} disabled={busy} onChange={() => void save('selected', users, flip(groups, g.id))} />
+                          <span className="truncate">{g.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {targets && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-(--muted)">Gebruikers</span>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {targets.users.map((u) => (
+                        <label key={u.id} className={chip(users.includes(u.id))}>
+                          <input type="checkbox" checked={users.includes(u.id)} disabled={busy} onChange={() => void save('selected', flip(users, u.id), groups)} />
+                          <span className="truncate">{u.name}</span>
+                        </label>
+                      ))}
+                      {!targets.users.length && <p className="text-sm text-(--muted)">Geen andere gebruikers.</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="tr-line text-xs text-(--muted)">
+              {vis === 'private' ? 'Alleen jij ziet en gebruikt deze agent.'
+                : 'Anderen zien hem als "Gedeeld door jou", alleen-lezen, en kunnen hem voor zichzelf aan- of uitzetten. Hij draait met hun eigen account, koppelingen en apparaten; jouw kennisblok en accountkeuze gelden daar niet. Wijzig je de agent, dan krijgt iedereen die versie.'}
+            </p>
+            {err && <p className="text-xs text-red-400">{err}</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The user's own agents: each with a name, avatar, model and prompt; Claude calls them in when their task comes up. */
 export default function AgentsPage() {
   const [list, setList] = useState<AgentDef[] | null>(null);
@@ -311,6 +397,8 @@ export default function AgentsPage() {
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([]);
   const [err, setErr] = useState('');
   const [accounts, setAccounts] = useState<ClaudeAccountInfo[]>([]);
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const [switching, setSwitching] = useState<string | null>(null);
 
   const apply = (agents: AgentDef[]) => { setList(agents); setAgentsCache(agents); setEditing(null); };
   useEffect(() => {
@@ -342,7 +430,26 @@ export default function AgentsPage() {
       {list && !list.length && editing !== 'new' && <p className="text-sm text-(--muted)">Nog geen agents.</p>}
 
       <div className="space-y-3">
-        {(list ?? []).map((a, i) => editing === a.id ? (
+        {(list ?? []).map((a, i) => a.shared_by ? (
+          <div key={a.id} style={{ '--i': Math.min(i, 10) } as React.CSSProperties}
+            className={clsx('wa-row-in rounded-xl border border-(--border) bg-(--input) flex items-center gap-3 px-4 py-3 transition-opacity duration-200', !a.is_active && 'opacity-70')}>
+            <AgentAvatar name={a.name} avatar={a.avatar} color={a.color} className="w-10 h-10 text-sm" />
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-medium text-(--text)">{a.name}</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent)">Gedeeld door {a.shared_by}</span>
+                {!a.is_active && <span className="text-xs px-1.5 py-0.5 rounded bg-(--border) text-(--muted)">uit</span>}
+              </div>
+              <p className="text-xs text-(--muted) line-clamp-2">{a.description}</p>
+            </div>
+            <button type="button" role="switch" aria-checked={a.is_active} aria-label={`${a.name} voor mezelf ${a.is_active ? 'uitzetten' : 'aanzetten'}`}
+              disabled={switching === a.id} className="ll-switch disabled:opacity-50"
+              onClick={async () => {
+                setSwitching(a.id); setErr('');
+                try { const r = await agentsApi.setMine(a.id, !a.is_active); setList(r.agents); setAgentsCache(r.agents); } catch (e) { setErr((e as Error).message); } finally { setSwitching(null); }
+              }} />
+          </div>
+        ) : editing === a.id ? (
           <AgentForm key={a.id} initial={toInput(a)} modelOptions={modelOptions} accounts={accounts} onCancel={() => setEditing(null)}
             onSave={async (x) => apply((await agentsApi.update(a.id, x)).agents)}
             onDelete={async () => apply((await agentsApi.remove(a.id)).agents)} />
@@ -368,6 +475,7 @@ export default function AgentsPage() {
               </div>
             </button>
             <TrainPanel agent={a} />
+            {isAdmin && <SharePanel agent={a} onChange={(l) => { setList(l); setAgentsCache(l); }} />}
           </div>
         ))}
       </div>

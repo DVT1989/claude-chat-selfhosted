@@ -124,8 +124,7 @@ export interface TaskInput {
 
 async function checkAgent(userId: string, agentId: string | null | undefined): Promise<void> {
   if (!agentId) return;
-  const r = await query('SELECT 1 FROM agents WHERE id = $1 AND user_id = $2', [agentId, userId]);
-  if (!r.rowCount) throw new AppError(400, 'Agent niet gevonden');
+  if (!(await listAgents(userId)).some((a) => a.id === agentId)) throw new AppError(400, 'Agent niet gevonden');
 }
 
 export async function createTask(userId: string, b: TaskInput): Promise<Task> {

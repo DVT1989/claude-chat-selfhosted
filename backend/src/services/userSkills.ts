@@ -1,5 +1,8 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync, chownSync, cpSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, readlinkSync, symlinkSync, writeFileSync, chownSync, cpSync } from 'fs';
 import { join } from 'path';
+import { query } from '../db';
+import { config } from '../config';
+import { AppError } from '../middleware/errorHandler';
 
 /**
  * A user's own skills: real folders in ~/.claude/skills (shared skills are symlinks there, see
@@ -145,4 +148,91 @@ export function deleteOwnSkill(home: string, name: string): boolean {
   } catch { return false; }
   rmSync(target, { recursive: true, force: true });
   return true;
+}
+
+// ── Sharing by admins ───────────────────────────────────────────
+export interface SharedSkill { name: string; description: string; owner: string; sizeKB: number; updatedAt: string }
+
+const homeOf = (userId: string) => join(config.claudeHomesRoot, `user-${userId}`);
+
+export async function ensureSkillSharingSchema(): Promise<void> {
+  await query(`CREATE TABLE IF NOT EXISTS shared_skills (
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (owner_id, name))`);
+}
+
+/** Names of this owner's skills that are shared with everyone. */
+export async function sharedNamesOf(ownerId: string): Promise<Set<string>> {
+  const r = await query<{ name: string }>('SELECT name FROM shared_skills WHERE owner_id = $1', [ownerId]);
+  return new Set(r.rows.map((x) => x.name));
+}
+
+/** Share (or stop sharing) one of the owner's own skills with everyone. */
+export async function setSkillShared(ownerId: string, name: string, shared: boolean): Promise<void> {
+  if (!isValidSkillName(name)) throw new AppError(404, 'Skill niet gevonden');
+  if (shared) {
+    const own = listOwnSkills(homeOf(ownerId)).some((s) => s.name === name);
+    if (!own) throw new AppError(404, 'Skill niet gevonden');
+    await query('INSERT INTO shared_skills (owner_id, name) VALUES ($1,$2) ON CONFLICT DO NOTHING', [ownerId, name]);
+  } else {
+    await query('DELETE FROM shared_skills WHERE owner_id = $1 AND name = $2', [ownerId, name]);
+  }
+}
+
+/**
+ * Skills other admins share with everyone, as folders in their home. Own skills of the user win on
+ * a name clash, and the first sharer wins between two admins. Only skills that still exist are returned.
+ */
+export async function listSharedSkills(userId: string): Promise<Array<SharedSkill & { dir: string }>> {
+  const r = await query<{ owner_id: string; name: string; owner: string }>(
+    `SELECT s.owner_id, s.name, u.name AS owner FROM shared_skills s JOIN users u ON u.id = s.owner_id
+     WHERE s.owner_id <> $1 AND u.is_active ORDER BY s.created_at`, [userId]);
+  const mine = new Set(listOwnSkills(homeOf(userId)).map((x) => x.name));
+  const seen = new Set<string>();
+  const out: Array<SharedSkill & { dir: string }> = [];
+  for (const row of r.rows) {
+    if (mine.has(row.name) || seen.has(row.name)) continue;
+    const dir = join(homeOf(row.owner_id), '.claude', 'skills', row.name);
+    try {
+      if (lstatSync(dir).isSymbolicLink()) continue;
+      const file = join(dir, 'SKILL.md');
+      const st = statSync(file);
+      out.push({ name: row.name, owner: row.owner, description: parseFrontmatter(readFileSync(file, 'utf8')).description ?? '',
+        sizeKB: Math.max(1, Math.round(st.size / 1024)), updatedAt: st.mtime.toISOString(), dir });
+      seen.add(row.name);
+    } catch { /* skill gone: skip */ }
+  }
+  return out;
+}
+
+/**
+ * Link the skills shared by admins into <home>/.claude/skills (symlinks to the owner's folder, so the
+ * owner's edits reach everyone). Real folders (own skills) and NAS-synced links are left alone; links
+ * that are no longer shared are removed.
+ */
+export async function linkUserSharedSkills(userId: string, home: string): Promise<void> {
+  try {
+    const wanted = new Map((await listSharedSkills(userId)).map((s) => [s.name, s.dir]));
+    const target = join(home, '.claude', 'skills');
+    if (!existsSync(target)) {
+      if (!wanted.size) return;
+      mkdirSync(target, { recursive: true, mode: 0o755 });
+      chownSync(join(home, '.claude'), CLAUDE_UID, CLAUDE_GID);
+      chownSync(target, CLAUDE_UID, CLAUDE_GID);
+    }
+    for (const name of readdirSync(target)) {
+      const p = join(target, name);
+      if (!lstatSync(p).isSymbolicLink()) continue;
+      const to = readlinkSync(p);
+      if (to.startsWith(config.claudeHomesRoot) && wanted.get(name) !== to) unlinkSync(p);
+    }
+    for (const [name, dir] of wanted) {
+      const link = join(target, name);
+      try { lstatSync(link); } catch { symlinkSync(dir, link); }
+    }
+  } catch (err) {
+    console.error('[skills] could not link skills shared by admins:', (err as Error).message);
+  }
 }

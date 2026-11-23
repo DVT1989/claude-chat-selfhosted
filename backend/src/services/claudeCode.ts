@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'child_process';
 import { languageLabel } from './i18n';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, symlinkSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, symlinkSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { randomBytes, createHash } from 'crypto';
 import { config } from '../config';
@@ -239,6 +239,18 @@ Lokaal is geen sudo nodig of aanwezig: docker werkt hier direct via de docker so
 ## Claude Code Authenticatie
 - OAuth tokens: \`/claude-homes/user-{userId}/.claude.json\`
 
+## Installaties koppelen (federatie)
+Gesprekken, agents, skills, geheugen, lessen, taken en projecten synchroniseren met een andere claude-chat-installatie. De gebruiker koppelt in de app (Instellingen > Installaties); jij importeert op verzoek ("importeer agent X van installatie Y"). Items zonder gebruiker met hetzelfde e-mailadres komen bij de beheerder die de koppeling maakte, met de naam van de installatie als label. Taken komen uit. Een conflict (lokaal en extern gewijzigd) wordt nooit overschreven: toon het en laat de gebruiker kiezen. Gebruik MT() uit het geheugen-onderdeel.
+\`\`\`bash
+FB=http://127.0.0.1:4000/federation/admin
+curl -s -H "$(MT)" $FB/peers                                   # installaties met status, laatste sync, soorten en open_conflicts
+curl -s -H "$(MT)" -H "Content-Type: application/json" $FB/peers/NAAM/import -d '{"kind":"agents","match":"Builder"}'   # importeer op verzoek (kind: agents|skills|memories|lessons|tasks|projects|conversations; match = deel van de naam of titel; negeert de vinkjes)
+curl -s -X POST -H "$(MT)" -H "Content-Type: application/json" $FB/peers/NAAM/sync -d '{"kinds":["agents"]}'   # nu synchroniseren (zonder body: de aangevinkte soorten)
+curl -s -H "$(MT)" $FB/conflicts                               # open conflicten (local en remote naast elkaar)
+curl -s -X POST -H "$(MT)" -H "Content-Type: application/json" $FB/conflicts/ID/resolve -d '{"choice":"remote"}'   # local = lokaal houden, remote = extern overnemen (alleen na keuze van de gebruiker)
+\`\`\`
+Sleutels (eenmalig zichtbaar) en nieuwe installaties koppelen gaat in de app, niet via de chat.
+
 ${werkplek ? '' : `## Backups
 Dagelijks om 03:00 in \`${config.projectDir}/backups/\` (dump.sql, config.tar.gz, manifest.json). Terugzetten en de stappen per datum: skill claude-chat-backups.
 `}`;
@@ -321,7 +333,8 @@ function linkSharedSkills(home: string): void {
     for (const name of readdirSync(target)) {
       const p = join(target, name);
       // drop links to skills that were removed from the shared set
-      if (lstatSync(p).isSymbolicLink() && !wanted.has(name)) unlinkSync(p);
+      // (links into other users' homes are skills shared by admins, see userSkills.ts)
+      if (lstatSync(p).isSymbolicLink() && !wanted.has(name) && !readlinkSync(p).startsWith(config.claudeHomesRoot)) unlinkSync(p);
     }
     for (const name of wanted) {
       const link = join(target, name);
@@ -1536,6 +1549,9 @@ export async function runTask(
   } catch (err) {
     console.error('[agents] could not load agents:', err);
   }
+
+  // Skills that admins share with everyone (links to the owner's folder; own skills win)
+  try { await (await import('./userSkills')).linkUserSharedSkills(userId, home); } catch { /* ignore */ }
 
   // Small core: log what this run's context costs (CLAUDE.md, memory, lessons, skills, agents)
   try {

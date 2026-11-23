@@ -471,10 +471,16 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     const G = 8;
     const sync = () => {
       const cs = getComputedStyle(ta);
-      for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'tabSize'] as const) {
+      for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'tabSize',
+        'fontKerning', 'textRendering', 'fontVariantLigatures', 'fontFeatureSettings', 'overflowWrap', 'wordBreak', 'whiteSpace'] as const) {
         (mi.style as unknown as Record<string, string>)[k] = cs[k] as string;
       }
-      for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'] as const) mi.style[k] = `${(parseFloat(cs[k]) || 0) + G}px`;
+      // iOS WebKit insets textarea text by 3px left and right on top of the CSS padding; without it the
+      // mirror is 6px wider, fits an extra word on a line and the glow lands a word too early
+      const IOS = typeof navigator !== 'undefined' && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+      const inset = IOS ? 3 : 0;
+      for (const k of ['paddingTop', 'paddingBottom'] as const) mi.style[k] = `${(parseFloat(cs[k]) || 0) + G}px`;
+      for (const k of ['paddingRight', 'paddingLeft'] as const) mi.style[k] = `${(parseFloat(cs[k]) || 0) + G + inset}px`;
       mi.style.width = `${ta.clientWidth + 2 * G}px`;
       mi.style.height = `${ta.clientHeight + 2 * G}px`;
       mi.style.top = `${ta.offsetTop + ta.clientTop - G}px`;

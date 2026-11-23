@@ -105,11 +105,18 @@ const flag = (s: MessengerSettings, kind: 'claude' | 'relay' | 'mirror', c: Chan
 
 export interface ChannelState { channel: Channel; ready: boolean; reason: string | null }
 
+/** The user's own Telegram chat: the bot with the WhatsApp link (opt_messenger) and the owner's chat on it. */
+async function telegramTarget(userId: string): Promise<{ enabled: boolean; bot_token_enc: string | null; chat_id: string | null } | undefined> {
+  return (await query<{ enabled: boolean; bot_token_enc: string | null; chat_id: string | null }>(
+    `SELECT b.enabled, b.bot_token_enc, c.chat_id FROM telegram_agent_bots b
+       LEFT JOIN LATERAL (SELECT chat_id FROM telegram_agent_chatters
+                           WHERE bot_id = b.id AND is_owner AND status = 'approved' ORDER BY decided_at DESC NULLS LAST LIMIT 1) c ON TRUE
+      WHERE b.user_id = $1 AND b.opt_messenger LIMIT 1`, [userId])).rows[0];
+}
+
 export async function channelState(userId: string, c: Channel): Promise<ChannelState> {
   if (c === 'telegram') {
-    const r = await query<{ enabled: boolean; bot_token_enc: string | null; chat_id: string | null }>(
-      'SELECT enabled, bot_token_enc, chat_id FROM telegram_links WHERE user_id = $1', [userId]);
-    const row = r.rows[0];
+    const row = await telegramTarget(userId);
     const reason = !row?.bot_token_enc ? 'niet ingesteld' : !row.enabled ? 'uitgeschakeld' : row.chat_id == null ? 'niet gekoppeld' : null;
     return { channel: c, ready: reason === null, reason };
   }
@@ -125,11 +132,10 @@ export async function deliver(userId: string, c: Channel, text: string): Promise
   const st = await channelState(userId, c);
   if (!st.ready) throw new Error(`${LABEL[c]} ${st.reason}`);
   if (c === 'telegram') {
-    const row = (await query<{ bot_token_enc: string; chat_id: string }>(
-      'SELECT bot_token_enc, chat_id FROM telegram_links WHERE user_id = $1', [userId])).rows[0];
+    const row = (await telegramTarget(userId))!;
     const { depsFor } = await import('./telegram/manager');
     const { toTelegramChunks } = await import('./telegram/format');
-    const deps = depsFor(decrypt(row.bot_token_enc));
+    const deps = depsFor(decrypt(row.bot_token_enc!));
     for (const part of toTelegramChunks(text)) await deps.send(Number(row.chat_id), part, true);
     return;
   }
@@ -216,6 +222,7 @@ const TABLE: Record<Channel, string> = { telegram: 'telegram_links', whatsapp: '
 
 /** Saves the active conversation of a channel; with syncActive also of the other channel. */
 export async function setActive(userId: string, c: Channel, id: string | null): Promise<void> {
+  await query('INSERT INTO telegram_links (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING', [userId]); // holds the active Telegram conversation
   await query(`UPDATE ${TABLE[c]} SET active_conversation_id = $2, updated_at = now() WHERE user_id = $1`, [userId, id]);
   if ((await getSettings(userId)).syncActive) {
     await query(`UPDATE ${TABLE[other(c)]} SET active_conversation_id = $2, updated_at = now() WHERE user_id = $1`, [userId, id]);

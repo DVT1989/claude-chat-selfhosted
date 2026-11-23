@@ -190,10 +190,10 @@ export default function ProfileSettings() {
     setTotpErr(''); setTotpBusy(true);
     try {
       await totpApi.enable(totpVerifyCode);
-      setTotpQr(null); setTotpSecret(''); setTotpVerifyCode('');
-      setTotpMsg('Tweestapsverificatie geactiveerd');
-      const me = await authApi.me() as { user: User };
-      setUser(me.user);
+      // every session is signed out now, this one too: log in again with the code
+      setUser(null);
+      window.location.href = '/login?reden=totp-aan';
+      return;
     } catch (e) {
       setTotpErr((e as Error).message);
     } finally { setTotpBusy(false); }
@@ -206,10 +206,9 @@ export default function ProfileSettings() {
     setTotpErr(''); setTotpBusy(true);
     try {
       await totpApi.disable(totpDisablePw);
-      setTotpDisablePw('');
-      setTotpMsg('Tweestapsverificatie uitgeschakeld');
-      const me = await authApi.me() as { user: User };
-      setUser(me.user);
+      setUser(null);
+      window.location.href = '/login?reden=totp-uit';
+      return;
     } catch (e) {
       setTotpErr((e as Error).message);
     } finally { setTotpBusy(false); }

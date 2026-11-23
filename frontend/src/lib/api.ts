@@ -3,6 +3,31 @@ const BASE = '/api';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Session gone (revoked, expired, TOTP changed): go to the login page instead of a half-working app.
+// Watches every fetch to /api, also from components with their own helper.
+const SESSION_ERRORS = new Set(['Session expired', 'Invalid token', 'Authentication required']);
+let leaving = false;
+export function toLogin(reason = 'verlopen'): void {
+  if (typeof window === 'undefined' || leaving || window.location.pathname.startsWith('/login')) return;
+  leaving = true;
+  const from = window.location.pathname + window.location.search;
+  window.location.href = `/login?reden=${reason}&from=${encodeURIComponent(from)}`;
+}
+if (typeof window !== 'undefined' && !(window as unknown as { __ccAuthWatch?: boolean }).__ccAuthWatch) {
+  (window as unknown as { __ccAuthWatch?: boolean }).__ccAuthWatch = true;
+  const orig = window.fetch.bind(window);
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await orig(input, init);
+    if (res.status === 401) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/api/') && !url.includes('/auth/login')) {
+        res.clone().json().then((j: { error?: string }) => { if (j?.error && SESSION_ERRORS.has(j.error)) toLogin(); }).catch(() => {});
+      }
+    }
+    return res;
+  };
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit,
@@ -357,7 +382,9 @@ export interface SkillsManifest {
   skills: SkillEntry[];
   hooks?: { plugin: string; event: string; what: string }[];
   /** The signed-in user's own skills (~/.claude/skills/<name>/SKILL.md) */
-  own?: { name: string; description: string; sizeKB: number; updatedAt: string; source?: string }[];
+  own?: { name: string; description: string; sizeKB: number; updatedAt: string; source?: string; shared?: boolean }[];
+  /** Skills admins share with everyone (read-only) */
+  sharedByOthers?: { name: string; description: string; owner: string; sizeKB: number; updatedAt: string }[];
 }
 export type SkillImportResult = { imported: { name: string; source: string }[]; skipped: { path: string; reason: string }[] };
 export type NewSkill = { name?: string; description?: string; instructions?: string; skillMd?: string };
@@ -366,6 +393,7 @@ export const skills = {
   add: (data: NewSkill) => request<{ ok: true; name: string }>('/skills', { method: 'POST', body: JSON.stringify(data) }),
   importGithub: (url: string) => request<SkillImportResult>('/skills/github', { method: 'POST', body: JSON.stringify({ url }) }),
   remove: (name: string) => request<{ ok: true }>(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  share: (name: string, shared: boolean) => request<{ ok: true; shared: boolean }>(`/skills/${encodeURIComponent(name)}/share`, { method: 'PUT', body: JSON.stringify({ shared }) }),
 };
 
 // ── Telegram ─────────────────────────────────────────────────
@@ -390,6 +418,38 @@ export const telegram = {
     request<TelegramStatus>('/telegram', { method: 'PUT', body: JSON.stringify(body) }),
   unpair: () => request<TelegramStatus>('/telegram/pairing', { method: 'DELETE' }),
   pairCode: () => request<{ code: string; expiresAt: string; link: string | null }>('/telegram/pair-code', { method: 'POST' }),
+};
+
+// ── Telegram agent bots ──────────────────────────────────────
+export interface AgentBotChatter {
+  id: string; name: string; username: string | null; status: 'pending' | 'approved' | 'denied' | 'revoked'; isOwner: boolean;
+  conversationId: string | null; requestedAt: string; decidedAt: string | null; lastActive: string | null;
+}
+export interface AgentBot {
+  id: string; name: string; botUsername: string | null; enabled: boolean; ratePerHour: number;
+  status: string; statusMessage: string | null; agentIds: string[]; chatters: AgentBotChatter[];
+  avatar: string | null; optCommands: boolean; optFull: boolean; optMessenger: boolean;
+  invite: { link: string; expiresAt: string } | null;
+}
+export type AgentBotUpdate = {
+  name?: string; botToken?: string; enabled?: boolean; agentIds?: string[]; ratePerHour?: number;
+  avatar?: string; optCommands?: boolean; optFull?: boolean; optMessenger?: boolean;
+};
+export interface AgentBotOverview {
+  agents: Array<{ id: string; name: string; color: string; avatar: string | null; shared_by: string | null; is_active: boolean }>;
+  bots: AgentBot[];
+}
+export const telegramBots = {
+  list: () => request<AgentBotOverview>('/telegram-bots'),
+  create: (b: { name: string; botToken: string; agentIds: string[]; ratePerHour: number }) =>
+    request<AgentBotOverview>('/telegram-bots', { method: 'POST', body: JSON.stringify(b) }),
+  update: (id: string, b: AgentBotUpdate) =>
+    request<AgentBotOverview>(`/telegram-bots/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
+  code: (id: string, kind: 'owner' | 'invite') =>
+    request<{ code: string; expiresAt: string; link: string | null }>(`/telegram-bots/${id}/code`, { method: 'POST', body: JSON.stringify({ kind }) }),
+  remove: (id: string) => request<AgentBotOverview>(`/telegram-bots/${id}`, { method: 'DELETE' }),
+  decide: (id: string, chatterId: string, action: 'approve' | 'deny' | 'revoke') =>
+    request<AgentBotOverview>(`/telegram-bots/${id}/chatters/${chatterId}`, { method: 'PUT', body: JSON.stringify({ action }) }),
 };
 
 // ── WhatsApp ─────────────────────────────────────────────────
@@ -443,8 +503,21 @@ export interface AgentDef {
   knowledge?: string | null; trained_at?: string | null; trained_conversations?: number;
   /** Claude accounts (slots) for this agent's own runs; null = all accounts */
   account_slots?: number[] | null;
+  /** Sharing by an admin; owner_id/shared_by tell whether this agent is shared with you (read-only) */
+  visibility?: 'private' | 'selected' | 'all';
+  share_users?: string[]; share_groups?: string[];
+  owner_id?: string;
+  shared_by?: string | null;
 }
-export type AgentInput = Omit<AgentDef, 'id' | 'slug' | 'created_at' | 'knowledge' | 'trained_at' | 'trained_conversations'>;
+export type AgentInput = Omit<AgentDef, 'id' | 'slug' | 'created_at' | 'knowledge' | 'trained_at' | 'trained_conversations' | 'visibility' | 'share_users' | 'share_groups' | 'owner_id' | 'shared_by'>;
+export interface UserGroup { id: string; name: string; members: string[] }
+export interface ShareTargets { users: { id: string; name: string }[]; groups: { id: string; name: string }[] }
+export const groupsApi = {
+  list: () => request<{ groups: UserGroup[]; users: { id: string; name: string }[] }>('/groups'),
+  create: (name: string, members: string[]) => request<{ groups: UserGroup[] }>('/groups', { method: 'POST', body: JSON.stringify({ name, members }) }),
+  update: (id: string, name: string, members: string[]) => request<{ groups: UserGroup[] }>(`/groups/${id}`, { method: 'PUT', body: JSON.stringify({ name, members }) }),
+  remove: (id: string) => request<{ groups: UserGroup[] }>(`/groups/${id}`, { method: 'DELETE' }),
+};
 export interface AgentTraining {
   state: 'geen' | 'wachten' | 'bezig' | 'klaar' | 'fout'; done: number; total: number; waiting: string | null; error: string | null;
   knowledge: string | null; trained_at: string | null; trained_conversations: number; can_revert: boolean;
@@ -457,6 +530,10 @@ export const agentsApi = {
   train: (id: string) => request<AgentTraining>(`/agents/${id}/train`, { method: 'POST' }),
   trainStatus: (id: string) => request<AgentTraining>(`/agents/${id}/train`),
   setKnowledge: (id: string, knowledge: string) => request<AgentTraining>(`/agents/${id}/knowledge`, { method: 'PATCH', body: JSON.stringify({ knowledge }) }),
+  shareTargets: () => request<ShareTargets>('/agents/share-targets'),
+  share: (id: string, visibility: 'private' | 'selected' | 'all', users: string[], groups: string[]) =>
+    request<{ agents: AgentDef[] }>(`/agents/${id}/share`, { method: 'PUT', body: JSON.stringify({ visibility, users, groups }) }),
+  setMine: (id: string, is_active: boolean) => request<{ agents: AgentDef[] }>(`/agents/${id}/mine`, { method: 'PUT', body: JSON.stringify({ is_active }) }),
   revertKnowledge: (id: string) => request<AgentTraining>(`/agents/${id}/knowledge/revert`, { method: 'POST' }),
 };
 

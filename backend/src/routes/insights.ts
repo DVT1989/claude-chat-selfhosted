@@ -93,7 +93,7 @@ for (const action of ['apply', 'reject', 'revert'] as const) {
 claude.get('/agents', async (req, res, next) => {
   try {
     const name = typeof req.query.name === 'string' ? req.query.name.toLowerCase() : '';
-    const list = (await listAgents(uid(req))).filter((a) => !name || a.name.toLowerCase() === name || a.slug === name || a.slug === `agent-${name}`);
+    const list = (await listAgents(uid(req), { ownOnly: true })).filter((a) => !name || a.name.toLowerCase() === name || a.slug === name || a.slug === `agent-${name}`);
     res.json({ agents: list.map((a) => ({ id: a.id, name: a.name, slug: a.slug, model: a.model, is_active: a.is_active, description: a.description, prompt: a.prompt })) });
   } catch (err) { next(err); }
 });

@@ -34,6 +34,8 @@ export const NavIcons = {
   agents: (c?: string) => <Icon className={c}><circle cx="10" cy="8" r="4" /><path d="M2.5 21a7.5 7.5 0 0 1 12.3-5.7" /><path d="M18.5 13.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9Z" /></Icon>,
   terminal: (c?: string) => <Icon className={c}><rect x="2" y="4" width="20" height="16" rx="3" /><path d="m7 9 3 3-3 3M13 15h4" /></Icon>,
   users: (c?: string) => <Icon className={c}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></Icon>,
+  /** two nodes with a two-way link: linked installations */
+  federation: (c?: string) => <Icon className={c}><rect x="2" y="3" width="8" height="7" rx="2" /><rect x="14" y="14" width="8" height="7" rx="2" /><path d="M6 10v4a3 3 0 0 0 3 3h5M18 14v-4a3 3 0 0 0-3-3h-5" /></Icon>,
   backups: (c?: string) => <Icon className={c}><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14a9 3 0 0 0 18 0V5" /><path d="M3 12a9 3 0 0 0 18 0" /></Icon>,
   shield: (c?: string) => <Icon className={c}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z" /><path d="m9 12 2 2 4-4" /></Icon>,
   logout: (c?: string) => <Icon className={c}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></Icon>,
@@ -86,6 +88,8 @@ const COLORS: Record<string, string> = {
   '/settings/adminprompt': '#475569',
   '/settings/admin': '#10b981',
   '/settings/backups': '#14b8a6',
+  '/settings/installaties': '#8b5cf6',
+  '/settings/groepen': '#0ea5e9',
   '/settings/kennis': '#f59e0b',
 };
 export function navColor(href: string): string {
@@ -134,7 +138,9 @@ export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
     ...(isAdmin ? [{ title: ADMIN_GROUP, items: [
       { href: '/settings/adminprompt', label: n('adminChat'), short: n('adminShort'), icon: NavIcons.terminal, tint: 'bg-slate-600' },
       { href: '/settings/admin', label: l.users, short: n('users'), icon: NavIcons.users, tint: 'bg-emerald-500' },
+      { href: '/settings/groepen', label: n('groups'), short: n('groups'), icon: NavIcons.users, tint: 'bg-sky-500' },
       { href: '/settings/backups', label: n('backups'), short: n('backups'), icon: NavIcons.backups, tint: 'bg-teal-500' },
+      { href: '/settings/installaties', label: 'Installaties', short: 'Installaties', icon: NavIcons.federation, tint: 'bg-violet-500' },
     ] }] : []),
   ];
 }

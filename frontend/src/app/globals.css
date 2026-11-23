@@ -1254,6 +1254,8 @@ html[data-theme="light"], html[data-theme="light-blue"] { color-scheme: light; }
 /* ── @agent suggestions ───────────────────────────────────────────── */
 .mention-menu { transform-origin: bottom center; animation: mentionIn 240ms var(--ease-out) both; }
 .mention-menu[data-state="closed"] { animation: mentionOut 160ms var(--ease-out) both; pointer-events: none; }
+/* the chat text behind it must not read through: near-opaque glass */
+.glass-menu.mention-menu::before { background: var(--lg-sheen), linear-gradient(var(--lg-tint), var(--lg-tint)), color-mix(in srgb, var(--g-bg-base) 94%, transparent); -webkit-backdrop-filter: blur(24px) saturate(160%); backdrop-filter: blur(24px) saturate(160%); }
 @keyframes mentionIn {
   from { opacity: 0; transform: translateY(8px) scale(.96); filter: blur(2px); }
   to   { opacity: 1; transform: none; filter: none; }

@@ -16,8 +16,12 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const reden = searchParams.get('reden');
+  const notice = reden === 'totp-aan' ? 'Tweestapsverificatie staat aan. Je bent overal uitgelogd: log opnieuw in met je code.'
+    : reden === 'totp-uit' ? 'Tweestapsverificatie staat uit. Je bent overal uitgelogd: log opnieuw in.'
+    : reden === 'verlopen' ? 'Je sessie is verlopen. Log opnieuw in.' : '';
   const [loading, setLoading] = useState(false);
-  const [needsTotp, setNeedsTotp] = useState(false);
+  const [needsTotp, setNeedsTotp] = useState(reden === 'totp-aan');
   const [totpCode, setTotpCode] = useState('');
   const [remember, setRemember] = useState(true);
 
@@ -72,6 +76,11 @@ function LoginForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4 rounded-card border border-(--card-border) bg-(--card-bg) shadow-(--card-shadow) backdrop-blur-xl p-5">
+        {notice && !error && (
+          <div className="bg-(--input) border border-(--border) rounded-lg px-4 py-3 text-(--text) text-sm motion-safe:animate-[ccFadeIn_.2s_ease-out]">
+            {notice}
+          </div>
+        )}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
             {error}

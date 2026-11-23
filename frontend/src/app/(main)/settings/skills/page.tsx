@@ -5,6 +5,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import { NavIcons } from '@/components/navItems';
 import { skills as skillsApi, type SkillsManifest } from '@/lib/api';
 import { useFocusParam } from '@/components/useFocusParam';
+import { useAuthStore } from '@/lib/store';
 
 function sourceLabel(source: string): string {
   if (source === 'user') return 'Gedeeld: eigen skills van de pc';
@@ -177,6 +178,8 @@ export default function SkillsPage() {
   const [filter, setFilter] = useState('');
   const [adding, setAdding] = useState(false);
   const [notice, setNotice] = useState('');
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const [sharing, setSharing] = useState<string | null>(null);
 
   function load() {
     skillsApi.list().then(setData).catch((e: Error) => setError(e.message));
@@ -197,6 +200,19 @@ export default function SkillsPage() {
     }
   }
 
+  async function share(name: string, shared: boolean) {
+    setSharing(name); setNotice('');
+    try {
+      await skillsApi.share(name, shared);
+      setData((d) => d && { ...d, own: d.own?.map((x) => (x.name === name ? { ...x, shared } : x)) });
+      setNotice(shared ? `"${name}" is nu voor iedereen beschikbaar.` : `"${name}" wordt niet meer gedeeld.`);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSharing(null);
+    }
+  }
+
   async function remove(name: string) {
     if (!confirm(`Skill "${name}" verwijderen?`)) return;
     try {
@@ -211,6 +227,7 @@ export default function SkillsPage() {
   const q = filter.trim().toLowerCase();
   useFocusParam(!!data);
   const own = (data?.own ?? []).filter((s) => !q || (s.name + ' ' + s.description).toLowerCase().includes(q));
+  const byOthers = (data?.sharedByOthers ?? []).filter((s) => !q || (s.name + ' ' + s.description).toLowerCase().includes(q));
   const groups = useMemo(() => {
     const map = new Map<string, SkillsManifest['skills']>();
     for (const s of data?.skills ?? []) {
@@ -238,7 +255,7 @@ export default function SkillsPage() {
         <div>
           <h1 className="text-lg font-semibold text-(--text)">Skills</h1>
           <p className="text-sm text-(--muted) mt-1">
-            {(data.own?.length ?? 0) + data.skills.length} skills beschikbaar in Claude Code
+            {(data.own?.length ?? 0) + (data.sharedByOthers?.length ?? 0) + data.skills.length} skills beschikbaar in Claude Code
             {when ? `; gedeelde skills bijgewerkt op ${when}` : ''}.
           </p>
         </div>
@@ -285,7 +302,15 @@ export default function SkillsPage() {
               <li key={s.name} data-focus-id={s.name} className="px-4 py-3 bg-(--input) flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <span className="font-mono text-[13px] text-(--text) break-all">{s.name}</span>
+                  {s.shared && <span className="tr-line ml-2 align-middle text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent)">gedeeld met iedereen</span>}
                   {s.description && <p className="text-sm text-(--muted) mt-1 line-clamp-3">{s.description}</p>}
+                  {isAdmin && (
+                    <label className="mt-2 inline-flex items-center gap-2 text-xs text-(--muted) cursor-pointer min-h-8">
+                      <button type="button" role="switch" aria-checked={!!s.shared} aria-label={`${s.name} delen met iedereen`} disabled={sharing === s.name}
+                        onClick={() => void share(s.name, !s.shared)} className="ll-switch disabled:opacity-50" />
+                      Delen met iedereen
+                    </label>
+                  )}
                   {s.source && (
                     <a href={s.source} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-(--accent) hover:underline break-all">
                       {s.source.replace(/^https:\/\/github\.com\//, 'github.com/').replace(/\/tree\/HEAD/, '')}
@@ -310,6 +335,23 @@ export default function SkillsPage() {
           </ul>
         )}
       </section>
+
+      {byOthers.length > 0 && (
+        <section className="mb-7">
+          <h2 className="text-xs font-medium text-(--muted) mb-2 px-1">Gedeeld door anderen ({byOthers.length})</h2>
+          <ul className="rounded-card border border-(--border) divide-y divide-(--border) overflow-hidden">
+            {byOthers.map((s, i) => (
+              <li key={s.name} style={{ '--i': Math.min(i, 8) } as React.CSSProperties} className="wa-row-in px-4 py-3 bg-(--input)">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="font-mono text-[13px] text-(--text) break-all">{s.name}</span>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent) shrink-0">Gedeeld door {s.owner}</span>
+                </div>
+                {s.description && <p className="text-sm text-(--muted) mt-1 line-clamp-3">{s.description}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {groups.length === 0 && q && <p className="text-sm text-(--muted) mb-7">Geen gedeelde skills gevonden voor &quot;{filter}&quot;.</p>}
 

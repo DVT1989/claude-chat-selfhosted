@@ -20,10 +20,13 @@ const botShort = (name: string) => `${name}, je butler voor Claude op de NAS.`;
 const botDescription = (name: string) => `Goedendag, ik ben ${name}. Via mij praat je met Claude op je NAS en ga je verder in je `
   + 'bestaande gesprekken. Ik luister alleen naar mijn eigenaar.';
 
-/** Name and avatar of this user's bot: own setting, else Anthron for admins, else none. */
+/** Name and avatar of this user's own bot: the bot with the WhatsApp link (agentBots), else the old setting, else Anthron for admins. */
 export async function botIdentity(userId: string): Promise<{ name: string | null; avatar: string | null }> {
   const r = await query<{ role: string; bot_name: string | null; bot_avatar: string | null }>(
-    `SELECT u.role, t.bot_name, t.bot_avatar FROM users u LEFT JOIN telegram_links t ON t.user_id = u.id WHERE u.id = $1`, [userId]);
+    `SELECT u.role, COALESCE(b.name, t.bot_name) AS bot_name, COALESCE(b.avatar, t.bot_avatar) AS bot_avatar
+       FROM users u LEFT JOIN telegram_links t ON t.user_id = u.id
+       LEFT JOIN LATERAL (SELECT name, avatar FROM telegram_agent_bots WHERE user_id = u.id AND opt_messenger LIMIT 1) b ON TRUE
+      WHERE u.id = $1`, [userId]);
   const row = r.rows[0];
   const admin = row?.role === 'admin';
   return {
@@ -240,7 +243,7 @@ async function doReload(userId: string): Promise<void> {
     await old.done.catch(() => undefined); // never two pollers on one token
   }
   const r = await query<{ enabled: boolean; bot_token_enc: string | null; chat_id: string | null; active_conversation_id: string | null; update_offset: string }>(
-    'SELECT enabled, bot_token_enc, chat_id, active_conversation_id, update_offset FROM telegram_links WHERE user_id = $1', [userId]);
+    'SELECT enabled, bot_token_enc, chat_id, active_conversation_id, update_offset FROM telegram_links WHERE user_id = $1 AND migrated_at IS NULL', [userId]);
   const row = r.rows[0];
   if (!row?.enabled || !row.bot_token_enc) {
     if (row) await setStatus(userId, 'off', null);
@@ -252,7 +255,7 @@ async function doReload(userId: string): Promise<void> {
 
 export async function startTelegram(): Promise<void> {
   try {
-    const r = await query<{ user_id: string }>('SELECT user_id FROM telegram_links WHERE enabled = true AND bot_token_enc IS NOT NULL');
+    const r = await query<{ user_id: string }>('SELECT user_id FROM telegram_links WHERE enabled = true AND bot_token_enc IS NOT NULL AND migrated_at IS NULL');
     for (const { user_id } of r.rows) await reloadTelegram(user_id);
     if (r.rows.length) console.log(`✓ Telegram: ${r.rows.length} bot(s) gestart`);
   } catch (err) {

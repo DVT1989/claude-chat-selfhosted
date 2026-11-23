@@ -165,7 +165,6 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
   const manage = mode === 'manage';
   const [data, setData] = useState<ListResponse | null>(null);
   const [adding, setAdding] = useState(false);
-  const [totp, setTotp] = useState('');
   const [enroll, setEnroll] = useState<Enroll | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [origin, setOrigin] = useState('');
@@ -208,19 +207,17 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
 
   // browsers (Chrome extension) are managed under Koppelingen, not listed as devices
   const devices = data?.devices?.filter((d) => d.os !== 'browser') ?? null;
-  const needTotp = !!data?.totpEnabled && !!data?.settings.requireTotp;
   const online = devices?.filter((d) => d.online).length ?? 0;
 
-  async function makeCode() {
-    setMsg(null);
-    try { setEnroll(await api<Enroll>('/enroll-code', { method: 'POST', body: JSON.stringify({ totp_code: totp }) })); setTotp(''); }
-    catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
+  const [codeErr, setCodeErr] = useState('');
+  async function makeCode(): Promise<boolean> {
+    setCodeErr('');
+    try { setEnroll(await api<Enroll>('/enroll-code', { method: 'POST', body: JSON.stringify({}) })); return true; }
+    catch (e) { setCodeErr((e as Error).message); return false; }
   }
-
-  async function saveTotpSetting(v: boolean) {
-    if (!data) return;
-    setData({ ...data, settings: { requireTotp: v } });
-    await api('/settings', { method: 'PUT', body: JSON.stringify({ requireTotp: v }) }).catch(() => void load());
+  function startAdd() {
+    setAdding(true); setEnroll(null); setMsg(null); setCodeErr('');
+    void makeCode();
   }
 
   return (
@@ -240,7 +237,7 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
           </label>
         )}
         {manage
-          ? !adding && <button className={primary} onClick={() => { setAdding(true); setEnroll(null); setMsg(null); }}>Toevoegen</button>
+          ? !adding && <button className={primary} onClick={startAdd}>Toevoegen</button>
           : <Link href="/settings/agent" className={ghost}>Beheren</Link>}
       </div>
 
@@ -250,37 +247,11 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
         </div>
       )}
 
-      {manage && (
-        <section className="min-w-0 rounded-card border border-(--border) bg-(--input) p-4 grid gap-4 md:grid-cols-2">
-          <div className="space-y-2 min-w-0">
-            <div className="text-sm font-medium text-(--text)">Windows</div>
-            <CopyLine text={`irm "${origin}/api/devices/download/windows.ps1${enroll ? `?code=${enroll.code}` : ''}" | iex`} />
-            <p className="text-xs text-(--muted) break-words">Plakken in PowerShell als administrator: installeert en koppelt zonder SmartScreen-meldingen.{!enroll && ' Maak eerst een koppelcode, dan staat die erin.'} Opnieuw uitvoeren werkt als update.</p>
-            <a href="/api/devices/download/windows" className="text-xs text-(--accent) hover:underline">Of de installer downloaden{data?.latestAgent ? ` (${data.latestAgent})` : ''}</a>
-          </div>
-          <div className="space-y-2 min-w-0">
-            <div className="text-sm font-medium text-(--text)">Mac (Terminal)</div>
-            <CopyLine text={`curl -fsSL ${origin}/api/devices/download/mac | sudo bash -s -- ${enroll?.code ?? 'KOPPELCODE'}`} />
-            <p className="text-xs text-(--muted)">Verwijderen: sudo /usr/local/claude-agent/uninstall.sh</p>
-          </div>
-        </section>
-      )}
 
       {manage && adding && (
         <section className="rounded-card border border-(--border) bg-(--input) p-4 space-y-4">
           {!enroll ? (
-            <div className="flex flex-wrap items-end gap-3">
-              {needTotp && (
-                <label className="block">
-                  <span className="block text-xs text-(--muted) mb-1">TOTP-code</span>
-                  <input value={totp} onChange={(e) => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Enter' && totp.length === 6) void makeCode(); }}
-                    className="w-32 bg-(--bg) border border-(--border) rounded-lg px-3 py-2 text-sm text-(--text) tracking-widest outline-none focus:border-(--accent)" />
-                </label>
-              )}
-              <button className={primary} disabled={needTotp && totp.length !== 6} onClick={() => void makeCode()}>Koppelcode maken</button>
-              <button className={ghost} onClick={() => setAdding(false)}>Annuleren</button>
-            </div>
+            codeErr ? <div className="text-xs text-(--bad)">{codeErr}</div> : <div className="text-xs text-(--muted)">Koppelcode maken…</div>
           ) : (
             <div className="space-y-4">
               <div>
@@ -289,8 +260,21 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <a href={enroll.windowsUrl} className={`${btn} inline-block bg-indigo-500 text-white hover:brightness-95`}>Windows-installer met deze code</a>
-                <span className="text-xs text-(--muted)">Of kopieer de PowerShell- of Terminal-regel hierboven, de code staat er al in.</span>
+                <span className="text-xs text-(--muted)">Of kopieer de PowerShell- of Terminal-regel, de code staat er al in.</span>
               </div>
+              <section className="min-w-0 grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 min-w-0">
+                  <div className="text-sm font-medium text-(--text)">Windows</div>
+                  <CopyLine text={`irm "${origin}/api/devices/download/windows.ps1?code=${enroll.code}" | iex`} />
+                  <p className="text-xs text-(--muted) break-words">Plakken in PowerShell als administrator: installeert en koppelt zonder SmartScreen-meldingen. Opnieuw uitvoeren werkt als update.</p>
+                  <a href="/api/devices/download/windows" className="text-xs text-(--accent) hover:underline">Of de installer downloaden{data?.latestAgent ? ` (${data.latestAgent})` : ''}</a>
+                </div>
+                <div className="space-y-2 min-w-0">
+                  <div className="text-sm font-medium text-(--text)">Mac (Terminal)</div>
+                  <CopyLine text={`curl -fsSL ${origin}/api/devices/download/mac | sudo bash -s -- ${enroll.code}`} />
+                  <p className="text-xs text-(--muted)">Verwijderen: sudo /usr/local/claude-agent/uninstall.sh</p>
+                </div>
+              </section>
               <div className="flex items-center gap-2 text-xs text-(--muted)">
                 <span className="w-2 h-2 rounded-full bg-(--accent) animate-pulse" /> Wacht op het apparaat…
                 <div className="flex-1" />
@@ -315,18 +299,6 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
         devices && devices.length > 0 && <MonitorTable devices={devices} latest={data?.latestAgent ?? null} showOwner={all} />
       )}
 
-      {manage && data && (
-        <section className="rounded-xl border border-(--border) bg-(--input) px-4 py-3 flex items-center gap-3">
-          <div className="flex-1">
-            <div className="text-sm text-(--text)">TOTP vragen bij koppelen</div>
-            {!data.totpEnabled && <div className="text-xs text-(--muted)">TOTP staat uit op je account (Profiel).</div>}
-          </div>
-          <button type="button" role="switch" aria-checked={data.settings.requireTotp} disabled={!data.totpEnabled} onClick={() => void saveTotpSetting(!data.settings.requireTotp)}
-            className={clsx('relative w-11 h-6 rounded-full transition-colors disabled:opacity-40', data.settings.requireTotp && data.totpEnabled ? 'bg-(--accent)' : 'bg-(--border)')}>
-            <span className={clsx('absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform', data.settings.requireTotp && data.totpEnabled ? 'translate-x-5.5' : 'translate-x-0.5')} />
-          </button>
-        </section>
-      )}
     </div>
   );
 }

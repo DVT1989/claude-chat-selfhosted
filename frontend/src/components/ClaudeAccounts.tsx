@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { claudeAuth, type ClaudeAccountInfo } from '@/lib/api';
 
-const time = (iso: string | null | undefined): string => {
+export const time = (iso: string | null | undefined): string => {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -13,7 +13,7 @@ const time = (iso: string | null | undefined): string => {
   return `${d.toLocaleDateString('nl-NL', { weekday: 'short', timeZone: 'Europe/Amsterdam' })} ${t}`;
 };
 
-function Bar({ label, pct, resetAt }: { label: string; pct: number | undefined; resetAt?: string | null }) {
+export function Bar({ label, pct, resetAt }: { label: string; pct: number | undefined; resetAt?: string | null }) {
   const p = Math.round(pct ?? 0);
   return (
     <div className="flex-1 min-w-0">

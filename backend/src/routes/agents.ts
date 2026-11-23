@@ -101,6 +101,7 @@ const agentSchema = z.object({
     .refine((v) => v == null || /^data:image\/(png|jpeg|jpg|webp|gif);base64,/.test(v), 'Ongeldige afbeelding'),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#6366f1'),
   is_active: z.boolean().default(true),
+  account_slots: z.array(z.number().int().min(0).max(20)).max(20).nullable().optional(),
 });
 
 agentsRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
@@ -126,9 +127,10 @@ agentsRouter.put('/:id', async (req: Request, res: Response, next: NextFunction)
     if (!cur.rows[0]) throw new AppError(404, 'Agent niet gevonden');
     const slug = cur.rows[0].name === b.name ? cur.rows[0].slug : await uniqueSlug(userId, b.name, id);
     await query(
-      `UPDATE agents SET name=$1, slug=$2, description=$3, prompt=$4, model=$5, avatar=$6, color=$7, is_active=$8, updated_at=now()
+      `UPDATE agents SET name=$1, slug=$2, description=$3, prompt=$4, model=$5, avatar=$6, color=$7, is_active=$8, account_slots=$11, updated_at=now()
        WHERE id = $9 AND user_id = $10`,
-      [b.name, slug, b.description, b.prompt, b.model, b.avatar ?? null, b.color, b.is_active, id, userId]);
+      [b.name, slug, b.description, b.prompt, b.model, b.avatar ?? null, b.color, b.is_active, id, userId,
+       b.account_slots?.length ? [...new Set(b.account_slots)].sort((x, y) => x - y) : null]);
     await auditLog(userId, 'agent.update', 'agent', id, req.ip ?? '', { name: b.name });
     res.json({ agents: await listAgents(userId) });
   } catch (err) { next(err); }

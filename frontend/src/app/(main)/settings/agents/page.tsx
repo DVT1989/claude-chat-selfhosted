@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { agentsApi, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining } from '@/lib/api';
+import { agentsApi, claudeAuth, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining, type ClaudeAccountInfo } from '@/lib/api';
+import { Bar, time as fmtTime } from '@/components/ClaudeAccounts';
 import clsx from 'clsx';
 import { AgentAvatar, setAgentsCache } from '@/components/chat/AgentBubble';
 import AgentWizard from '@/components/agents/AgentWizard';
@@ -38,8 +39,72 @@ function ByClaude({ show }: { show: boolean }) {
   );
 }
 
-function AgentForm({ initial, modelOptions, onSave, onCancel, onDelete, isNew }: {
-  initial: AgentInput; modelOptions: Array<{ id: string; label: string }>;
+/** "Account 2" or "Account 1 + 3" for the chosen slots; null = all accounts. */
+const slotsLabel = (slots: number[] | null | undefined) => (slots?.length ? `Account ${slots.map((s) => s + 1).join(' + ')}` : null);
+
+/** The account (of the chosen ones) that frees up first, when all chosen accounts are full; else null. */
+function allFull(slots: number[] | null | undefined, accounts: ClaudeAccountInfo[]): ClaudeAccountInfo | null {
+  const chosen = accounts.filter((x) => slots?.includes(x.slot));
+  if (!chosen.length || !chosen.every((x) => x.usableAt)) return null;
+  return chosen.reduce((b, x) => (Date.parse(x.usableAt!) < Date.parse(b.usableAt!) ? x : b));
+}
+
+/**
+ * Which Claude accounts this agent may use in its own runs (workplaces, tasks): all (automatic, by
+ * usage) or a chosen set. Only shown with two or more linked accounts.
+ */
+function AccountPicker({ slots, accounts, onChange }: { slots: number[] | null | undefined; accounts: ClaudeAccountInfo[]; onChange: (s: number[] | null) => void }) {
+  const [mode, setMode] = useState<'all' | 'pick'>(slots?.length ? 'pick' : 'all');
+  const chosen = slots ?? [];
+  const gone = chosen.filter((s) => !accounts.some((x) => x.slot === s));
+  const full = mode === 'pick' ? allFull(slots, accounts) : null;
+  const toggle = (s: number) => {
+    const n = chosen.includes(s) ? chosen.filter((x) => x !== s) : [...chosen, s].sort((x, y) => x - y);
+    onChange(n.length ? n : null);
+  };
+  const seg = (on: boolean) => clsx('flex-1 px-3 py-1.5 rounded-lg text-sm transition-colors duration-200',
+    on ? 'bg-(--accent-strong) text-white shadow-sm' : 'text-(--muted) hover:text-(--text)');
+  return (
+    <div className="space-y-2">
+      <span className="text-xs text-(--muted)">Claude-account</span>
+      <div className="flex gap-1 p-1 rounded-xl border border-(--border) bg-(--bg) max-w-sm" role="radiogroup">
+        <button type="button" role="radio" aria-checked={mode === 'all'} className={seg(mode === 'all')}
+          onClick={() => { setMode('all'); onChange(null); }}>Alle accounts</button>
+        <button type="button" role="radio" aria-checked={mode === 'pick'} className={seg(mode === 'pick')}
+          onClick={() => setMode('pick')}>Kies accounts</button>
+      </div>
+      <div className={clsx('ll-fold', mode !== 'pick' && 'is-shut')}>
+        <div>
+          <div className="grid gap-2 sm:grid-cols-2 pt-1">
+            {accounts.map((x) => {
+              const on = chosen.includes(x.slot);
+              const pct = Math.max(x.usage?.session?.pct ?? 0, x.usage?.weekly?.pct ?? 0);
+              return (
+                <label key={x.slot} className={clsx('min-h-11 rounded-xl border px-3 py-2 cursor-pointer transition-colors duration-200 flex flex-col gap-1.5',
+                  on ? 'border-(--accent) bg-(--accent)/10' : 'border-(--border) bg-(--bg) hover:border-(--accent)/50')}>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <input type="checkbox" checked={on} onChange={() => toggle(x.slot)} />
+                    <span className="text-sm font-medium text-(--text) shrink-0">Account {x.slot + 1}</span>
+                    {x.email && <span className="text-xs text-(--muted) truncate">{x.email}</span>}
+                  </span>
+                  {x.usableAt && <span className="tr-line self-start text-[11px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">vol, weer bruikbaar om {fmtTime(x.usableAt)}</span>}
+                  <Bar label="verbruik" pct={x.usage ? pct : undefined} />
+                </label>
+              );
+            })}
+          </div>
+          {gone.map((s) => <p key={s} className="tr-line mt-2 text-xs text-amber-500">Account {s + 1} (niet meer gekoppeld): deze agent gebruikt dan alle accounts.</p>)}
+          {!chosen.length && <p className="mt-2 text-xs text-(--muted)">Niets gekozen: bij opslaan gebruikt deze agent alle accounts.</p>}
+        </div>
+      </div>
+      {mode === 'all' && <p className="tr-line text-xs text-(--muted)">Claude verdeelt automatisch op basis van verbruik. Geldt voor werkplekken en automatische taken van deze agent.</p>}
+      {full && <p className="tr-line text-xs text-amber-500">Alle gekozen accounts zitten aan hun limiet. Deze agent wacht tot Account {full.slot + 1} om {fmtTime(full.usableAt)} weer vrij is.</p>}
+    </div>
+  );
+}
+
+function AgentForm({ initial, modelOptions, accounts, onSave, onCancel, onDelete, isNew }: {
+  initial: AgentInput; modelOptions: Array<{ id: string; label: string }>; accounts: ClaudeAccountInfo[];
   onSave: (a: AgentInput) => Promise<void>; onCancel: () => void; onDelete?: () => Promise<void>; isNew?: boolean;
 }) {
   const [a, setA] = useState<AgentInput>(initial);
@@ -135,6 +200,7 @@ function AgentForm({ initial, modelOptions, onSave, onCancel, onDelete, isNew }:
       </div>
 
       {byClaude.has('model') && modelReason && <p className="text-xs text-(--muted) -mt-2">{modelReason}</p>}
+      {accounts.length >= 2 && <AccountPicker slots={a.account_slots} accounts={accounts} onChange={(s) => set({ account_slots: s })} />}
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="flex items-center gap-2">
         <button type="submit" disabled={busy} className="px-4 py-2 rounded-control bg-(--accent-strong) text-white text-sm font-medium disabled:opacity-50">{busy ? 'Opslaan…' : 'Opslaan'}</button>
@@ -244,14 +310,16 @@ export default function AgentsPage() {
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([]);
   const [err, setErr] = useState('');
+  const [accounts, setAccounts] = useState<ClaudeAccountInfo[]>([]);
 
   const apply = (agents: AgentDef[]) => { setList(agents); setAgentsCache(agents); setEditing(null); };
   useEffect(() => {
     agentsApi.list().then((r) => { setList(r.agents); setAgentsCache(r.agents); }).catch((e) => setErr((e as Error).message));
+    claudeAuth.accounts().then((r) => setAccounts(r.accounts)).catch(() => {});
     modelsApi.list().then((r) => setModelOptions(r.models.filter((m) => m.id !== 'opusplan').map((m) => ({ id: m.id, label: m.label })))).catch(() => {});
   }, []);
 
-  const toInput = (a: AgentDef): AgentInput => ({ name: a.name, description: a.description, prompt: a.prompt, model: a.model, avatar: a.avatar, color: a.color, is_active: a.is_active });
+  const toInput = (a: AgentDef): AgentInput => ({ name: a.name, description: a.description, prompt: a.prompt, model: a.model, avatar: a.avatar, color: a.color, is_active: a.is_active, account_slots: a.account_slots ?? null });
 
   return (
     <div className="space-y-6">
@@ -267,7 +335,7 @@ export default function AgentsPage() {
       {err && <p className="text-sm text-red-400">{err}</p>}
 
       {editing === 'new' && (
-        <AgentForm isNew initial={EMPTY} modelOptions={modelOptions} onCancel={() => setEditing(null)}
+        <AgentForm isNew initial={EMPTY} modelOptions={modelOptions} accounts={accounts} onCancel={() => setEditing(null)}
           onSave={async (a) => apply((await agentsApi.create(a)).agents)} />
       )}
 
@@ -275,7 +343,7 @@ export default function AgentsPage() {
 
       <div className="space-y-3">
         {(list ?? []).map((a, i) => editing === a.id ? (
-          <AgentForm key={a.id} initial={toInput(a)} modelOptions={modelOptions} onCancel={() => setEditing(null)}
+          <AgentForm key={a.id} initial={toInput(a)} modelOptions={modelOptions} accounts={accounts} onCancel={() => setEditing(null)}
             onSave={async (x) => apply((await agentsApi.update(a.id, x)).agents)}
             onDelete={async () => apply((await agentsApi.remove(a.id)).agents)} />
         ) : (
@@ -288,6 +356,13 @@ export default function AgentsPage() {
                   <span className="text-sm font-medium text-(--text)">{a.name}</span>
                   <span className="text-xs text-(--muted)">{a.model === 'inherit' ? 'model van het gesprek' : a.model}</span>
                   {!a.is_active && <span className="text-xs px-1.5 py-0.5 rounded bg-(--border) text-(--muted)">uit</span>}
+                  {accounts.length >= 2 && slotsLabel(a.account_slots) && (
+                    <span className="tr-line inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-(--border) text-(--muted)"
+                      title={allFull(a.account_slots, accounts) ? 'Alle gekozen accounts zitten aan hun limiet' : undefined}>
+                      {allFull(a.account_slots, accounts) && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                      {slotsLabel(a.account_slots)}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-(--muted) truncate">{a.description}</p>
               </div>

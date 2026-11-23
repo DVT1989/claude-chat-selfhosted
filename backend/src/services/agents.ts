@@ -13,6 +13,8 @@ export interface Agent {
   id: string; name: string; slug: string; description: string; prompt: string;
   model: string; avatar: string | null; color: string; is_active: boolean; created_at: string;
   knowledge: string | null; trained_at: string | null; trained_conversations: number;
+  /** Claude account slots this agent may use in its own runs (workplaces, tasks); null = all accounts */
+  account_slots: number[] | null;
 }
 
 export async function ensureAgentsSchema(): Promise<void> {
@@ -35,6 +37,7 @@ export async function ensureAgentsSchema(): Promise<void> {
   // training on earlier conversations (services/agentTraining.ts); every change logged so it can be undone
   await query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge TEXT,
     ADD COLUMN IF NOT EXISTS trained_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS trained_conversations INTEGER NOT NULL DEFAULT 0`);
+  await query('ALTER TABLE agents ADD COLUMN IF NOT EXISTS account_slots INTEGER[]');
   await query(`
     CREATE TABLE IF NOT EXISTS agent_training_log (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,7 +59,7 @@ export function slugify(name: string): string {
 export async function listAgents(userId: string): Promise<Agent[]> {
   const r = await query<Agent>(
     `SELECT id, name, slug, description, prompt, model, avatar, color, is_active, created_at,
-            knowledge, trained_at, trained_conversations
+            knowledge, trained_at, trained_conversations, account_slots
      FROM agents WHERE user_id = $1 ORDER BY created_at`, [userId]);
   return r.rows;
 }
@@ -72,7 +75,7 @@ export async function uniqueSlug(userId: string, name: string, exceptId?: string
   throw new AppError(409, 'Kies een andere naam');
 }
 
-export interface NewAgent { name: string; description: string; prompt: string; model?: string; avatar?: string | null; color?: string; is_active?: boolean }
+export interface NewAgent { name: string; description: string; prompt: string; model?: string; avatar?: string | null; color?: string; is_active?: boolean; account_slots?: number[] | null }
 
 /** Create an agent for this user (max 30). Used by the agents page and the task wizard. Returns the new id. */
 export async function createAgent(userId: string, a: NewAgent): Promise<string> {
@@ -80,9 +83,9 @@ export async function createAgent(userId: string, a: NewAgent): Promise<string> 
   if (Number(count.rows[0].n) >= 30) throw new AppError(400, 'Maximaal 30 agents');
   const slug = await uniqueSlug(userId, a.name);
   const r = await query<{ id: string }>(
-    `INSERT INTO agents (user_id, name, slug, description, prompt, model, avatar, color, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    [userId, a.name, slug, a.description, a.prompt, a.model ?? 'inherit', a.avatar ?? null, a.color ?? '#6366f1', a.is_active ?? true]);
+    `INSERT INTO agents (user_id, name, slug, description, prompt, model, avatar, color, is_active, account_slots)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    [userId, a.name, slug, a.description, a.prompt, a.model ?? 'inherit', a.avatar ?? null, a.color ?? '#6366f1', a.is_active ?? true, a.account_slots?.length ? a.account_slots : null]);
   return r.rows[0].id;
 }
 
@@ -227,3 +230,19 @@ export function assistPrompt(i: AssistInput): { prompt: string; schema: object }
 }
 
 export { ASSIST_SYSTEM };
+
+/**
+ * Account slots for the run of this conversation: the agent of a workplace (delegation) or of an
+ * automatic task, when that agent is limited to certain accounts. Null = all accounts. Never throws.
+ */
+export async function accountSlotsForConversation(conversationId: string): Promise<number[] | null> {
+  try {
+    const r = await query<{ slots: number[] | null }>(
+      `SELECT a.account_slots AS slots FROM conversations c
+         LEFT JOIN scheduled_tasks t ON t.id::text = c.metadata->>'task_id'
+         JOIN agents a ON a.id::text = COALESCE(c.metadata->>'delegated_agent_id', t.agent_id::text)
+       WHERE c.id = $1`, [conversationId]);
+    const slots = r.rows[0]?.slots;
+    return slots && slots.length ? slots : null;
+  } catch { return null; }
+}

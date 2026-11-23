@@ -1603,7 +1603,11 @@ ${att.textContent}
   // (claudeAccounts.ts). The home stays the user's own, so all accounts share the conversations.
   // (a switch before the message starts is silent; only a switch in the middle of an answer is
   // announced, see the failover in routes/stream.ts)
-  const account = await pickAccount(userId);
+  // an agent's own run (workplace, task) can be limited to certain accounts (agents.account_slots)
+  const allowedSlots = opts.conversationId
+    ? await import('./agents').then((m) => m.accountSlotsForConversation(opts.conversationId!)).catch(() => null)
+    : null;
+  const account = await pickAccount(userId, allowedSlots);
   const accessToken = account.token ?? await getValidAccessToken(userHome, { forRun: true });
   beginAccountRun(account.dir);
   let runEnded = false;

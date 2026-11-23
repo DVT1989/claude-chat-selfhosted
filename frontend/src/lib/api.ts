@@ -432,6 +432,8 @@ export interface AgentDef {
   id: string; name: string; slug: string; description: string; prompt: string;
   model: string; avatar: string | null; color: string; is_active: boolean; created_at: string;
   knowledge?: string | null; trained_at?: string | null; trained_conversations?: number;
+  /** Claude accounts (slots) for this agent's own runs; null = all accounts */
+  account_slots?: number[] | null;
 }
 export type AgentInput = Omit<AgentDef, 'id' | 'slug' | 'created_at' | 'knowledge' | 'trained_at' | 'trained_conversations'>;
 export interface AgentTraining {

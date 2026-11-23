@@ -222,9 +222,15 @@ export interface PickedAccount {
 }
 
 /** Account and token for the next run of this user. */
-export async function pickAccount(userId: string): Promise<PickedAccount> {
+export async function pickAccount(userId: string, allowed: number[] | null = null): Promise<PickedAccount> {
   const home = getUserHomeDir(userId);
-  const accounts = listAccounts(userId);
+  const all = listAccounts(userId);
+  // an agent limited to certain accounts (agents.account_slots); none of them linked any more = all
+  const only = allowed?.length ? all.filter((a) => allowed.includes(a.slot)) : [];
+  const accounts = only.length ? only : all;
+  if (only.length === 1) {
+    return { slot: only[0].slot, dir: only[0].dir, token: await getValidAccessToken(only[0].dir, { forRun: true }), switched: null };
+  }
   if (accounts.length <= 1) {
     return { slot: 0, dir: home, token: await getValidAccessToken(home, { forRun: true }), switched: null };
   }
@@ -233,8 +239,9 @@ export async function pickAccount(userId: string): Promise<PickedAccount> {
     return { ...a, load: load(usage), limitedUntil: lockFor(a.dir, usage) };
   }));
   const chosen = chooseAccount(rated);
-  const prev = lastSlot.get(userId) ?? 0;
-  lastSlot.set(userId, chosen.slot);
+  const key = only.length ? `${userId}:${only.map((a) => a.slot).join(',')}` : userId;
+  const prev = lastSlot.get(key) ?? accounts[0].slot;
+  lastSlot.set(key, chosen.slot);
   let switched: PickedAccount['switched'] = null;
   if (chosen.slot !== prev) {
     const from = rated.find((a) => a.slot === prev);

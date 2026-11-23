@@ -11,6 +11,7 @@ import { getAuthStatus } from '../services/claudeCode';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { updateStatus, runUpdate } from '../services/appUpdate';
 import { createBackup, listBackups, restoreBackup, deleteBackup, restartBackend, BACKUP_ROOT } from '../services/backup';
 
 export const adminRouter = Router();
@@ -260,6 +261,18 @@ adminRouter.get('/logs', async (req: Request, res: Response, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// App update: compare with GitHub and pull + rebuild (services/appUpdate.ts)
+adminRouter.get('/update', async (_req: Request, res: Response, next: NextFunction) => {
+  try { res.json(await updateStatus()); } catch (err) { next(err); }
+});
+adminRouter.post('/update', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const r = await runUpdate();
+    await auditLog(req.user!.userId, 'app.update', 'system', null, req.ip ?? '', { services: r.services });
+    res.json(r);
+  } catch (err) { next(err); }
 });
 
 // Backups run in this process (the former admin-claude container was merged into the backend).

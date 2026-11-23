@@ -74,6 +74,7 @@ services:
       - DOCKER_API_VERSION=1.43
       - PROJECT_DIR=${PROJECT_DIR:-/volume1/docker/claude-chat}
       - HOST_LABEL=${HOST_LABEL:-server}
+      - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
     volumes:
       - workspace_data:/workspace
       - home_data:/claude-homes

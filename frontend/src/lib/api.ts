@@ -183,7 +183,16 @@ export const claudeAuth = {
 };
 
 // ── Admin ─────────────────────────────────────────────────────
+export interface UpdateCommit { sha: string; subject: string; date: string }
+export interface AppUpdateStatus {
+  available: boolean; reason: string | null; repo: string | null; branch: string | null;
+  current: UpdateCommit | null; latest: UpdateCommit | null; behind: number; ahead: number; dirty: number;
+  incoming: UpdateCommit[]; services: string[]; updating: boolean; checkedAt: string;
+}
+
 export const admin = {
+  updateStatus: () => request<AppUpdateStatus>('/admin/update'),
+  runUpdate: () => request<{ message: string; services: string[] }>('/admin/update', { method: 'POST' }),
   getStats: () =>
     request<{ users: number; conversations: number; messages: number; totalTokens: number }>('/admin/stats'),
 

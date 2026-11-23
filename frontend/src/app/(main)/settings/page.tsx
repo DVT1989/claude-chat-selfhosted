@@ -7,6 +7,7 @@ import { auth as authApi, models as modelsApi, totp as totpApi, push as pushApi 
 import { useTranslations } from '@/lib/i18n';
 import type { User, ModelOption } from '@/types';
 import UserAvatar from '@/components/UserAvatar';
+import AppUpdate from '@/components/settings/AppUpdate';
 import { syncDevicePush, subscribeDevice, setPushOptOut } from '@/lib/pushClient';
 
 const DEFAULT_ACCENT = '#CC785C';
@@ -577,6 +578,10 @@ export default function ProfileSettings() {
         </div>
 
         <hr className="border-(--border)" />
+
+        {/* App update against GitHub (admin only) */}
+        {user?.role === 'admin' && <AppUpdate />}
+        {user?.role === 'admin' && <hr className="border-(--border)" />}
 
         {/* PWA diagnose (admin only) */}
         {user?.role === 'admin' && (

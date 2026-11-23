@@ -21,8 +21,22 @@ export interface ModelOption {
   category: 'alias' | 'full';
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  instructions: string;
+  chat_count: number;
+  last_activity: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Conversation {
   id: string;
+  /** project this chat belongs to (shared working dir and instructions), null for a loose chat */
+  project_id?: string | null;
   title: string;
   model: string;
   status: 'active' | 'archived' | 'deleted';
@@ -49,7 +63,7 @@ export interface Message {
 export interface Connector {
   id: string;
   name: string;
-  type: 'git' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'github' | 'focustrack';
+  type: 'git' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'github' | 'focustrack' | 'google-search-console';
   config: Record<string, unknown>;
   is_active: boolean;
   test_status: 'ok' | 'error' | null;

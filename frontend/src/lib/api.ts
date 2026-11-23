@@ -84,6 +84,16 @@ export const auth = {
     request<{ ok: boolean; user?: import('@/types').User }>('/auth/me', { method: 'PUT', body: JSON.stringify(data) }),
 };
 
+// ── Projects ──────────────────────────────────────────────────
+export const projectsApi = {
+  list: () => request<{ projects: import('@/types').Project[] }>('/projects'),
+  create: (data: { name: string; color?: string; instructions?: string }) =>
+    request<{ project: import('@/types').Project }>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<{ name: string; color: string; instructions: string }>) =>
+    request<{ project: import('@/types').Project }>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request(`/projects/${id}`, { method: 'DELETE' }),
+};
+
 // ── Conversations ─────────────────────────────────────────────
 export const conversations = {
   list: (limit = 50, offset = 0) =>
@@ -92,13 +102,13 @@ export const conversations = {
   get: (id: string) =>
     request<import('@/types').ConversationDetail & { conversation: import('@/types').Conversation }>(`/conversations/${id}`),
 
-  create: (data: { title?: string; model?: string; connectorIds?: string[]; deviceId?: string }) =>
+  create: (data: { title?: string; model?: string; connectorIds?: string[]; deviceId?: string; projectId?: string }) =>
     request<{ conversation: import('@/types').Conversation }>('/conversations', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: Partial<{ title: string; model: string; status: string; connectorIds: string[] }>) =>
+  update: (id: string, data: Partial<{ title: string; model: string; status: string; connectorIds: string[]; projectId: string | null }>) =>
     request(`/conversations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   delete: (id: string) =>
@@ -260,6 +270,16 @@ export const connectors = {
 
   test: (id: string) =>
     request<{ ok: boolean; message: string }>(`/connectors/${id}/test`, { method: 'POST' }),
+};
+
+// ── Google Search Console (OAuth) ─────────────────────────────
+export const googleSc = {
+  status: () => request<{ configured: boolean; clientId: string | null; isAdmin: boolean; redirectUri: string; scope: string }>('/connectors/google/status'),
+  login: () => request<{ url: string }>('/connectors/google/login', { method: 'POST' }),
+  saveConfig: (clientId: string, clientSecret: string) =>
+    request<{ ok: boolean }>('/connectors/google/config', { method: 'PUT', body: JSON.stringify({ clientId, clientSecret }) }),
+  clearConfig: () => request<{ ok: boolean }>('/connectors/google/config', { method: 'DELETE' }),
+  setupPrompt: () => request<{ prompt: string; browsers: number }>('/connectors/google/setup-prompt'),
 };
 
 // ── Attachments ───────────────────────────────────────────────

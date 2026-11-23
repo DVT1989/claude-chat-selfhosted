@@ -2,8 +2,9 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
 import { runStructured } from './claudeCode';
+import { config } from '../config';
 
-const PROJECT_DIR = process.env.PROJECT_DIR ?? '/volume1/docker/claude-chat';
+const PROJECT_DIR = config.projectDir;
 const MESSAGES_DIR = join(PROJECT_DIR, 'frontend', 'messages');
 
 export const BUILTIN: Record<string, string> = { en: 'English', nl: 'Nederlands' };

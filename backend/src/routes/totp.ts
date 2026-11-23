@@ -3,7 +3,7 @@ import { generateSecret, generateURI, verify as verifyTotp, createGuardrails } f
 import { toDataURL } from 'qrcode';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import { encrypt, decrypt } from '../services/crypto';
+import { encrypt, decrypt, hashToken } from '../services/crypto';
 import { query } from '../db';
 import { sessions } from '../redis';
 import { requireAuth, auditLog } from '../middleware/auth';
@@ -16,6 +16,19 @@ totpRouter.use(requireAuth);
 const guardrails = createGuardrails({ MIN_SECRET_BYTES: 10 });
 
 const APP_NAME = 'Claude Chat';
+
+// Kick every other device but keep the current session, so the settings page keeps working.
+async function revokeOtherSessions(req: Request, userId: string): Promise<void> {
+  const token = req.cookies?.auth_token ?? req.headers.authorization?.replace('Bearer ', '');
+  if (!token) {
+    await sessions.delAll(userId);
+    await query('DELETE FROM sessions WHERE user_id = $1', [userId]).catch(() => {});
+    return;
+  }
+  const keep = hashToken(token);
+  await sessions.delAllExcept(userId, keep);
+  await query('DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2', [userId, keep]).catch(() => {});
+}
 
 // Start enrollment: generate fresh secret, store as pending, return otpauth URL + QR.
 totpRouter.post('/setup', async (req: Request, res: Response, next) => {
@@ -66,9 +79,8 @@ totpRouter.post('/enable', async (req: Request, res: Response, next) => {
       'UPDATE users SET totp_secret = pending_totp_secret, totp_enabled = TRUE, pending_totp_secret = NULL WHERE id = $1',
       [userId],
     );
-    // Security best practice: force re-login on every device once 2FA is enrolled, so the new factor is required everywhere.
-    await sessions.delAll(userId);
-    await query('DELETE FROM sessions WHERE user_id = $1', [userId]).catch(() => {});
+    // Force re-login on every other device so the new factor is required there; this session stays valid.
+    await revokeOtherSessions(req, userId);
     await auditLog(userId, 'user.totp.enable', 'user', userId, req.ip ?? '', {});
     res.json({ ok: true });
   } catch (err) {
@@ -94,9 +106,8 @@ totpRouter.post('/disable', async (req: Request, res: Response, next) => {
       'UPDATE users SET totp_enabled = FALSE, totp_secret = NULL, pending_totp_secret = NULL WHERE id = $1',
       [userId],
     );
-    // Disabling 2FA is a sensitive change — kick all devices so re-auth is required everywhere.
-    await sessions.delAll(userId);
-    await query('DELETE FROM sessions WHERE user_id = $1', [userId]).catch(() => {});
+    // Disabling 2FA is a sensitive change: kick all other devices; this session stays valid.
+    await revokeOtherSessions(req, userId);
     await auditLog(userId, 'user.totp.disable', 'user', userId, req.ip ?? '', {});
     res.json({ ok: true });
   } catch (err) {

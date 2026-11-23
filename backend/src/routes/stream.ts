@@ -425,6 +425,17 @@ async function prepareAndRun(
     }
   }));
 
+  // Google Search Console: trade the stored refresh token for a fresh access token for this run
+  await Promise.all(connResult.rows.map(async (row, i) => {
+    if (row.type !== 'google-search-console' || !row.credentials_enc) return;
+    try {
+      const { accessTokenFor } = await import('../services/googleSearchConsole');
+      connectors[i].credentials = { access_token: await accessTokenFor(row.credentials_enc) };
+    } catch (err) {
+      connectors[i].credentials = { error: (err as Error).message };
+    }
+  }));
+
   // Telegram / WhatsApp as a pseudo-connector: a fresh per-run token, only for channels the user allows
   if (!isSystemConv) {
     try {
@@ -550,8 +561,20 @@ async function prepareAndRun(
     effectiveModel = u.rows[0]?.default_model ?? 'sonnet';
   }
 
+  // Chat in a project: runs in the shared project dir with the project's instructions
+  let project: { id: string; name: string; instructions: string } | null = null;
+  if (!isSystemConv) {
+    try {
+      const pr = await query<{ id: string; name: string; instructions: string }>(
+        'SELECT p.id, p.name, p.instructions FROM projects p JOIN conversations c ON c.project_id = p.id WHERE c.id = $1 AND p.user_id = $2',
+        [conv.id, o.userId]);
+      project = pr.rows[0] ?? null;
+    } catch (e) { console.error('[stream] project lookup failed:', (e as Error).message); }
+  }
+
   // Kick the task off in the background; listeners follow it through the broker.
   void runConversationTask({
+    project,
     userId: o.userId,
     language: o.language,
     conv,
@@ -752,6 +775,7 @@ interface RunArgs {
   language: string;
   conv: { id: string; model: string; metadata: Record<string, unknown> };
   sessionId: string | null;
+  project?: { id: string; name: string; instructions: string } | null;
   isSystemConv: boolean;
   connectors: ConnectorConfig[];
   attachmentInfos: AttachmentInfo[];
@@ -1008,10 +1032,10 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   const attempt = async (message: string, sid: string | null, first: boolean): Promise<string> => {
     const onEv = (ev: unknown) => handleEvent(ev as { type: string; [key: string]: unknown });
     const result = isSystemConv
-      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
+      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack' || c.type === 'google-search-console'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
           language, first ? attachmentInfos : [], effectiveModel, { privileged: true, conversationId: conv.id, werkplek: !!(conv.metadata as { delegation_id?: string }).delegation_id })
       : await runTask(userId, message, sid, onEv, abort.signal, connectors, undefined,
-          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id });
+          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project });
     return result.sessionId;
   };
   /** Remove the limit notice of the interrupted attempt from the answer being built. */

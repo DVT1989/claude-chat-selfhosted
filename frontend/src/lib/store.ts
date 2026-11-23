@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { User, Conversation, Message } from '@/types';
+import type { User, Conversation, Message, Project } from '@/types';
 
 interface AuthStore {
   user: User | null;
@@ -18,6 +18,12 @@ export const useAuthStore = create<AuthStore>()(
 );
 
 interface ChatStore {
+  projects: Project[];
+  setProjects: (projects: Project[]) => void;
+  /** which tab and which project the list shows (survives leaving the list on phones) */
+  listTab: 'chats' | 'projects';
+  openProjectId: string | null;
+  setListView: (tab: 'chats' | 'projects', projectId?: string | null) => void;
   conversations: Conversation[];
   activeConversationId: string | null;
   messages: Record<string, Message[]>;
@@ -51,6 +57,11 @@ interface ChatStore {
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
+  projects: [],
+  setProjects: (projects) => set({ projects }),
+  listTab: 'chats',
+  openProjectId: null,
+  setListView: (listTab, openProjectId = null) => set({ listTab, openProjectId }),
   conversations: [],
   activeConversationId: null,
   messages: {},

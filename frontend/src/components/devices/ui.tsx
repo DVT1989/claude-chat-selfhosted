@@ -500,6 +500,8 @@ const ICONS: Record<string, React.ReactNode> = {
   keys: <><rect x="3" y="8" width="5" height="8" rx="1.5" /><rect x="10" y="8" width="5" height="8" rx="1.5" /><rect x="17" y="8" width="4" height="8" rx="1.5" /></>,
   touchpad: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 15h18M12 15v4" /></>,
   finger: <path d="M9 11V5a1.5 1.5 0 0 1 3 0v6M12 10V8.5a1.5 1.5 0 0 1 3 0V11M15 10.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L4 15.5a1.5 1.5 0 0 1 2.5-1.6L9 16" />,
+  key: <><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M16 7l3 3M14 9l2 2" /></>,
+  trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" /></>,
   lock: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
   gauge: <><path d="M4 18a8 8 0 1 1 16 0" /><path d="M12 18l4-6" /></>,
   expand: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,

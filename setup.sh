@@ -6,6 +6,7 @@ rnd() { openssl rand -hex "$1"; }
 if [ ! -f .env ]; then
   url="${1:-http://localhost:15980}"
   sed -e "s#^APP_URL=.*#APP_URL=$url#" \
+      -e "s#^PROJECT_DIR=.*#PROJECT_DIR=$(pwd)#" \
       -e "s#^POSTGRES_PASSWORD=.*#POSTGRES_PASSWORD=$(rnd 24)#" \
       -e "s#^REDIS_PASSWORD=.*#REDIS_PASSWORD=$(rnd 24)#" \
       -e "s#^JWT_SECRET=.*#JWT_SECRET=$(rnd 64)#" \
@@ -13,7 +14,7 @@ if [ ! -f .env ]; then
       -e "s#^INTERNAL_API_KEY=.*#INTERNAL_API_KEY=$(rnd 32)#" \
       .env.example > .env
   chmod 600 .env
-  echo "Created .env (APP_URL=$url)"
+  echo "Created .env (APP_URL=$url, PROJECT_DIR=$(pwd))"
 else
   echo ".env exists, left alone"
 fi

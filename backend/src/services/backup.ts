@@ -5,9 +5,10 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
+import { config } from '../config';
 
 // Project dir is bind-mounted at the same path as on the host, so docker -v paths match.
-export const PROJECT_DIR = process.env.PROJECT_DIR ?? '/volume1/docker/claude-chat';
+export const PROJECT_DIR = config.projectDir;
 export const BACKUP_ROOT = join(PROJECT_DIR, 'backups');
 // Host path of BACKUP_ROOT: docker run -v is resolved by the host daemon, not inside this container.
 export const HOST_BACKUP_ROOT = process.env.HOST_BACKUP_ROOT ?? BACKUP_ROOT;

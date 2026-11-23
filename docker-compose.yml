@@ -72,16 +72,18 @@ services:
       - PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
       - NODE_OPTIONS=--dns-result-order=ipv4first
       - DOCKER_API_VERSION=1.43
-      - PROJECT_DIR=/volume1/docker/claude-chat
+      - PROJECT_DIR=${PROJECT_DIR:-/volume1/docker/claude-chat}
+      - HOST_LABEL=${HOST_LABEL:-server}
     volumes:
       - workspace_data:/workspace
       - home_data:/claude-homes
       - ./shared-skills:/shared-skills:ro
       - ./import:/import:ro
       - whatsapp_data:/data/whatsapp
+      - browser_data:/data/browser
       # Admin chat + backups: docker socket and project dir (only reachable with gid 0, see backend/Dockerfile)
       - /var/run/docker.sock:/var/run/docker.sock
-      - /volume1/docker/claude-chat:/volume1/docker/claude-chat
+      - ${PROJECT_DIR:-/volume1/docker/claude-chat}:${PROJECT_DIR:-/volume1/docker/claude-chat}
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,6 +155,8 @@ volumes:
   workspace_data:
     driver: local
   home_data:
+    driver: local
+  browser_data:
     driver: local
   whatsapp_data:
     driver: local

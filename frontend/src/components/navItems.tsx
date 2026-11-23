@@ -44,6 +44,14 @@ export const NavIcons = {
   /** clock with a turning arrow: scheduled tasks */
   tasks: (c?: string) => <Icon className={c}><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" /><path d="M20.5 3.5V8H16" /><path d="M12 7.5V12l3 2" /></Icon>,
   plus: (c?: string) => <Icon className={c}><path d="M12 5v14M5 12h14" /></Icon>,
+  /** map with a tab: project */
+  folder: (c?: string) => <Icon className={c}><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z" /></Icon>,
+  back: (c?: string) => <Icon className={c}><path d="m15 18-6-6 6-6" /></Icon>,
+  gear: (c?: string) => <Icon className={c}><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>,
+  dots: (c?: string) => <Icon className={c}><circle cx="5.5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="18.5" cy="12" r="1.2" /></Icon>,
+  chat: (c?: string) => <Icon className={c}><path d="M21 12a8.5 8.5 0 0 1-12.4 7.5L3.5 21l1.5-4.6A8.5 8.5 0 1 1 21 12Z" /></Icon>,
+  check: (c?: string) => <Icon className={c}><path d="m5 12.5 4.5 4.5L19 7.5" /></Icon>,
+  trash: (c?: string) => <Icon className={c}><path d="M4 7h16M10 11v6M14 11v6M6 7l.9 12a2 2 0 0 0 2 1.9h6.2a2 2 0 0 0 2-1.9L18 7M9 7V4.5A.5.5 0 0 1 9.5 4h5a.5.5 0 0 1 .5.5V7" /></Icon>,
   search: (c?: string) => <Icon className={c}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Icon>,
 };
 

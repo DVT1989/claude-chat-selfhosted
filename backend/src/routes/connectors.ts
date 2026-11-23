@@ -8,7 +8,7 @@ import { testConnector } from '../services/connectors';
 
 export const connectorsRouter = Router();
 
-const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack'] as const;
+const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack', 'google-search-console'] as const;
 type ConnectorType = (typeof CONNECTOR_TYPES)[number];
 
 // ── All routes below require authentication ──────────────────────────────────
@@ -43,6 +43,7 @@ const connectorSchema = z.object({
 connectorsRouter.post('/', async (req: Request, res: Response, next) => {
   try {
     const body = connectorSchema.parse(req.body);
+    if (body.type === 'google-search-console') throw new AppError(400, 'Deze koppeling maak je met Inloggen met Google');
 
     const credEnc = body.credentials
       ? encrypt(JSON.stringify(body.credentials))

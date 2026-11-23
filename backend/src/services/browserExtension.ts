@@ -5,8 +5,9 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { crc32, deflateRawSync } from 'zlib';
+import { config } from '../config';
 
-export const EXT_DIR = process.env.BROWSER_EXT_DIR || '/volume1/docker/claude-chat/browser-extension';
+export const EXT_DIR = process.env.BROWSER_EXT_DIR || `${config.projectDir}/browser-extension`;
 const SKIP = new Set(['make-icons.mjs', 'README.md', 'test']);
 
 function files(dir: string, base = ''): Array<{ name: string; data: Buffer }> {

@@ -613,6 +613,24 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   const markResumed = () => setRateLimitBanner(b => b?.status === 'scheduled'
     ? { ...b, status: 'resumed', at: new Date(), key: Date.now() } : b);
 
+  // The planned continuation can start out of sight (other window, after a restart, page in the background):
+  // while the notice waits, ask the backend now and then; once nothing is planned any more it was picked up.
+  const waitingForResume = rateLimitBanner?.status === 'scheduled';
+  useEffect(() => {
+    if (!waitingForResume) return;
+    let stopped = false;
+    const check = () => {
+      convApi.getScheduledResume(conversationId).then(({ scheduledFor }) => {
+        if (!stopped && !scheduledFor) markResumed();
+      }).catch(() => {});
+    };
+    const t = setInterval(check, 15_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingForResume, conversationId]);
+
   // Shared event applier — used by both the local fetch reader-loop and the
   // EventSource live-subscribe stream so transitions stay identical.
   const applyStreamEvent = useCallback(async (eventType: string, data: Record<string, unknown>, id?: string) => {

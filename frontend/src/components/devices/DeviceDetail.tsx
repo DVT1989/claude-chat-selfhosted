@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { useChatStore } from '@/lib/store';
 import { conversations as convApi } from '@/lib/api';
+import NasBrowserPage from './NasBrowserPage';
 import {
   ago, alertsOf, api, Badge, cancelTask, Device, deviceTitle, DeviceIcon, execOn, fmtDate, ghost, health, inMaintenance, osLabel, parseJson, primary, Task, UsageBar,
 } from './shared';
@@ -481,7 +482,7 @@ const queueTask = (id: string, command: string, label: string, tool: string, tim
 
 // ── Page ─────────────────────────────────────────────────────
 
-export default function DeviceDetail({ id }: { id: string }) {
+function DeviceDetailPc({ id }: { id: string }) {
   const [d, setD] = useState<Device | null>(null);
   const [err, setErr] = useState('');
   const [tab, setTabState] = useState<Tab>('overview');
@@ -558,7 +559,7 @@ export default function DeviceDetail({ id }: { id: string }) {
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-(--border) bg-(--input) overflow-visible">
         <span className={clsx('self-stretch w-1.5 rounded-l-xl', h === 'bad' ? 'bg-red-500' : h === 'warn' ? 'bg-yellow-500' : 'bg-green-500')} />
         <span className="relative shrink-0 py-3">
-          <span className="w-11 h-11 rounded-xl bg-indigo-500 text-white flex items-center justify-center"><DeviceIcon className="w-6 h-6" /></span>
+          <span className="w-11 h-11 rounded-xl bg-indigo-500 text-white flex items-center justify-center"><DeviceIcon os={d.os} className="w-6 h-6" /></span>
         </span>
         <div className="flex-1 min-w-[12rem] py-3">
           <div className="flex items-center gap-2 min-w-0">
@@ -637,4 +638,17 @@ function SettingsPane({ d, onDevice, tasks, reload }: { d: Device; onDevice: (d:
       <Card><TaskList d={d} tasks={tasks} reload={reload} title="Alle taken (7 dagen)" limit={100} /></Card>
     </div>
   );
+}
+
+// The virtual "Browser (NAS)" device has its own, simpler page; everything else is the full PC page.
+export default function DeviceDetail({ id }: { id: string }) {
+  const [os, setOs] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void api<{ device: Device }>(`/${id}`).then((r) => { if (live) setOs(r.device.os); }).catch(() => { if (live) setOs(null); });
+    return () => { live = false; };
+  }, [id]);
+  if (os === undefined) return <p className="text-sm text-(--muted)">Laden…</p>;
+  if (os === 'nasbrowser') return <NasBrowserPage id={id} />;
+  return <DeviceDetailPc id={id} />;
 }

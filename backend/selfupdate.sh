@@ -3,7 +3,7 @@
 # The admin chat runs inside the backend container, so a plain `docker compose up -d --build backend`
 # from here would kill itself halfway (old container stopped, new one never created).
 # --no-deps: only the named services are recreated, never postgres/redis.
-P=/volume1/docker/claude-chat
+P=${PROJECT_DIR:-/volume1/docker/claude-chat}
 LOG=$P/.selfupdate.log
 NAME=claude-chat-selfupdate
 
@@ -24,7 +24,7 @@ for s in "$@"; do [ "$s" = "--force" ] && FORCE=1; done
 set -- $(for s in "$@"; do [ "$s" != "--force" ] && printf '%s ' "$s"; done)
 case " $* " in *" backend "*)
   if [ $FORCE -eq 0 ]; then
-    BUSY=$(docker exec claude-chat-backend-1 sh -c 'curl -s -m 5 -H "x-internal-key: $INTERNAL_API_KEY" http://127.0.0.1:4000/internal/active-agents' 2>/dev/null \
+    BUSY=$(docker exec -e EXCL="${CC_CONVERSATION_ID:-}" claude-chat-backend-1 sh -c 'curl -s -m 5 -H "x-internal-key: $INTERNAL_API_KEY" "http://127.0.0.1:4000/internal/active-agents?exclude=$EXCL"' 2>/dev/null \
       | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{for(const a of JSON.parse(d).agents)console.log("  - "+a.agentName+": "+a.task+" ("+a.minutes+" min bezig)")}catch{}})' 2>/dev/null)
     if [ -n "$BUSY" ]; then
       echo "Let op: deze agents zijn nog bezig en worden afgebroken als de backend herstart:" >&2

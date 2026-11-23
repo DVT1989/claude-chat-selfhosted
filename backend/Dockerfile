@@ -150,6 +150,12 @@ RUN mkdir -p /claude-homes && chown clauderunner:clauderunner /claude-homes && c
 COPY package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
+# Chromium for the virtual device "Browser (NAS)" (headless, started on demand, persistent profile per user in /data/browser)
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell chromium \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /data/browser && chmod 700 /data/browser
+
 COPY --from=builder /app/dist ./dist
 
 # Agent downloads (served by /devices/download/*)

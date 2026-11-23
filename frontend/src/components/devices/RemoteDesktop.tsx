@@ -78,9 +78,15 @@ const charCode = (ch: string): string | null => {
   return null;
 };
 const HINT_KEY = 'cc:rd-touch-hint';
+interface PwInfo { host: string | null; accounts: Array<{ id: string; username: string }>; offer: { host: string; username: string; kind: 'new' | 'update' } | null; choose: boolean }
+type PwBanner = { kind: 'offer'; host: string; username: string; update: boolean } | { kind: 'choose'; host: string; accounts: PwInfo['accounts'] };
 
 export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }) {
   const isMac = d.os === 'darwin';
+  const isNas = d.os === 'nasbrowser';
+  const [nas, setNas] = useState<{ tabs: Array<{ id: string; title: string; url: string; active: boolean }>; canBack: boolean; canForward: boolean; loading: boolean; pw?: PwInfo }>({ tabs: [], canBack: false, canForward: false, loading: false });
+  const [urlDraft, setUrlDraft] = useState<string | null>(null);
+  const pwLast = useRef<PwBanner | null>(null);
   // a Windows/Linux keyboard on a Mac: Ctrl+C/V/... must arrive as Cmd+C/V/..., the Win key is Cmd too
   const ctrlIsCmd = isMac && !(typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform));
   const physCode = (c: string) => (ctrlIsCmd && (c === 'ControlLeft' || c === 'ControlRight') ? 'MetaLeft' : c);
@@ -139,6 +145,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
   const kbdInput = useRef<HTMLTextAreaElement>(null);
   const sid = useRef<string | null>(null);
   const queue = useRef<Ev[]>([]);
+  const textKeys = useRef<Set<string>>(new Set());
   const pressed = useRef<Set<string>>(new Set());
   const counters = useRef({ frames: 0, bytes: 0 });
   const scaleRef = useRef(1);
@@ -329,6 +336,8 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
                 if (st.status === 'ended') endReason = st.reason ?? 'beëindigd';
                 if (st.status === 'stalled') setStalled(true);
                 if (st.status === 'live') setStalled(false);
+                if (st.status === 'tabs') setNas(st as unknown as typeof nas);
+                if (st.status === 'cursor' && canvas.current) canvas.current.style.cursor = /^[a-z-]+$/.test(String((st as { c?: string }).c)) ? String((st as { c?: string }).c) : 'default';
                 if (st.status === 'claude') onClaude.current(st as unknown as { t: string; x?: number; y?: number });
                 continue;
               }
@@ -531,6 +540,8 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
     const down = (e: KeyboardEvent) => {
       if (!controlRef.current || skip(e) || !e.code) return;
       e.preventDefault();
+      // NAS browser: printable keys go as text, so any keyboard layout types the right character
+      if (isNas && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { textKeys.current.add(e.code); push({ t: 'text', s: e.key }); return; }
       const c = physCode(e.code);
       pressed.current.add(c);
       push({ t: 'k', c, down: true });
@@ -538,6 +549,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
     const up = (e: KeyboardEvent) => {
       if (!controlRef.current || skip(e) || !e.code) return;
       e.preventDefault();
+      if (textKeys.current.delete(e.code)) return;
       const c = physCode(e.code);
       pressed.current.delete(c);
       push({ t: 'k', c, down: false });
@@ -547,7 +559,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
     el.addEventListener('keyup', up);
     window.addEventListener('blur', release);
     return () => { el.removeEventListener('keydown', down); el.removeEventListener('keyup', up); window.removeEventListener('blur', release); };
-  }, [push]);
+  }, [push, isNas]);
 
   useEffect(() => { root.current?.focus(); }, []);
 
@@ -780,7 +792,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
     label: `${v.label}${quality === k ? ' (actief)' : ''}`, detail: k === 'low' ? 'Halve resolutie, voor 4G' : k === 'high' ? 'Meer data' : undefined, disabled: !live, onClick: () => changeQuality(k as keyof typeof QUALITY),
   }));
   const more: MenuItem[] = [
-    ...(isMac ? [] : [{ label: 'Ctrl+Alt+Del', disabled: !live || busy === 'sas', onClick: () => void sas() }]),
+    ...(isMac || isNas ? [] : [{ label: 'Ctrl+Alt+Del', disabled: !live || busy === 'sas', onClick: () => void sas() }]),
     { label: 'Tekst plakken', detail: 'Bijvoorbeeld een wachtwoord uit je kluis', disabled: !live || !control, onClick: () => setTyping(true) },
     ...(compact ? [{ label: keysBar ? 'Toetsenbalk verbergen' : 'Toetsenbalk', detail: isMac ? 'Esc, Tab, Cmd, Option, pijltjes, F-toetsen' : 'Esc, Tab, Ctrl, Alt, Win, pijltjes, F-toetsen', disabled: !control, onClick: () => setKeysBar((k) => !k) }] : []),
     { label: 'Kwaliteit', items: qualityItems },
@@ -799,6 +811,83 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
       {!mini && stLabel}
     </span>
   );
+  const nasCmd = (body: Record<string, unknown>) => {
+    if (!sid.current) return;
+    void fetch(`${base(d.id)}/s/${sid.current}/browser`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...scopeHeaders() }, body: JSON.stringify(body) }).catch(() => undefined);
+  };
+  const nasPw = (body: Record<string, unknown>) => {
+    if (!sid.current) return;
+    void fetch(`${base(d.id)}/s/${sid.current}/pw`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...scopeHeaders() }, body: JSON.stringify(body) }).catch(() => undefined);
+    root.current?.focus();
+  };
+  const activeTab = nas.tabs.find((t) => t.active);
+  // password bar: stays rendered (last content) while it fades out
+  const pwInfo = nas.pw;
+  const pwNow: PwBanner | null = pwInfo?.offer ? { kind: 'offer', host: pwInfo.offer.host, username: pwInfo.offer.username, update: pwInfo.offer.kind === 'update' }
+    : pwInfo?.choose && pwInfo.host ? { kind: 'choose', host: pwInfo.host, accounts: pwInfo.accounts } : null;
+  if (pwNow) pwLast.current = pwNow;
+  const pwShow = pwNow ?? pwLast.current;
+  const pwOpen = !!pwNow;
+  const pwItems: MenuItem[] = pwInfo?.accounts.length
+    ? pwInfo.accounts.map((a) => ({ label: a.username, detail: 'Invullen', onClick: () => nasPw({ action: 'fill', id: a.id }) }))
+    : [{ label: 'Geen opgeslagen accounts', detail: pwInfo?.host ?? 'Open een inlogpagina', disabled: true }];
+  const nasBar = isNas && (
+    <div data-rd-toolbar className="nas-bar shrink-0 border-b border-white/10" style={{ background: 'var(--g-bg-base, #111)', paddingTop: compact ? 'calc(env(safe-area-inset-top, 0px) + 15px)' : undefined }}>
+      <div className="nas-pw" data-open={pwOpen ? '1' : '0'} aria-hidden={!pwOpen} role="region" aria-label="Wachtwoordmanager">
+        <div className="nas-pw-in">
+          {pwShow && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2.5 py-2 border-b border-white/10 bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]">
+              <Icon name="key" className="w-[18px] h-[18px] shrink-0 text-(--accent)" />
+              {pwShow.kind === 'offer' ? (
+                <>
+                  <span className="min-w-0 flex-1 basis-48 text-[13px] text-(--text) truncate">
+                    {pwShow.update ? 'Wachtwoord bijwerken' : 'Wachtwoord opslaan'} voor <b className="font-semibold">{pwShow.host}</b>?
+                    <span className="text-(--muted)"> {pwShow.username}</span>
+                  </span>
+                  <div className="flex items-center gap-1.5 max-sm:w-full">
+                    <button tabIndex={pwOpen ? 0 : -1} className={clsx(primary, 'h-9 !px-3 text-[13px] max-sm:flex-1')} onClick={() => nasPw({ action: 'save' })}>{pwShow.update ? 'Bijwerken' : 'Opslaan'}</button>
+                    <button tabIndex={pwOpen ? 0 : -1} className={clsx(ghost, 'h-9 !px-3 text-[13px] max-sm:flex-1')} onClick={() => nasPw({ action: 'never' })}>Nooit</button>
+                    <button tabIndex={pwOpen ? 0 : -1} className={clsx(ib, 'shrink-0')} onClick={() => nasPw({ action: 'dismiss' })} title="Niet nu" aria-label="Niet nu"><Icon name="close" /></button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 basis-40 text-[13px] text-(--text) truncate">Account kiezen voor <b className="font-semibold">{pwShow.host}</b></span>
+                  <div className="flex flex-wrap items-center gap-1.5 max-sm:w-full">
+                    {pwShow.accounts.map((a) => (
+                      <button key={a.id} tabIndex={pwOpen ? 0 : -1} className={clsx(ghost, 'h-9 !px-3 text-[13px] max-w-[14rem] truncate max-sm:flex-1')} onClick={() => nasPw({ action: 'fill', id: a.id })}>{a.username}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 px-2 py-1.5">
+        <button className={ib} disabled={!live || !nas.canBack} onClick={() => nasCmd({ cmd: 'back' })} title="Terug" aria-label="Terug"><svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7" /></svg></button>
+        <button className={ib} disabled={!live || !nas.canForward} onClick={() => nasCmd({ cmd: 'forward' })} title="Vooruit" aria-label="Vooruit"><svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg></button>
+        <button className={ib} disabled={!live} onClick={() => nasCmd({ cmd: nas.loading ? 'stop' : 'reload' })} title={nas.loading ? 'Stoppen' : 'Herladen'} aria-label={nas.loading ? 'Stoppen' : 'Herladen'}>{nas.loading ? <Icon name="close" /> : <Icon name="refresh" />}</button>
+        <form className="flex-1 min-w-0 relative" onSubmit={(e) => { e.preventDefault(); const v = (urlDraft ?? '').trim(); if (v) nasCmd({ cmd: 'navigate', url: v }); setUrlDraft(null); (document.activeElement as HTMLElement | null)?.blur(); root.current?.focus(); }}>
+          <input value={urlDraft ?? activeTab?.url ?? ''} disabled={!live} onChange={(e) => setUrlDraft(e.target.value)} onFocus={(e) => e.currentTarget.select()} onBlur={() => setUrlDraft(null)}
+            inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="Zoek of typ een adres" aria-label="Adres"
+            className="w-full h-10 sm:h-9 rounded-[10px] px-3 text-[13px] text-(--text) bg-(--input) border border-(--border) outline-none focus:border-(--accent) transition-colors" />
+        </form>
+        <Menu label={<span className="relative inline-flex"><Icon name="key" />{!!pwInfo?.accounts.length && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-(--accent)" aria-hidden />}</span>} caret={false} title="Wachtwoorden" items={pwItems} align="right" buttonClass={ib} disabled={!live} />
+      </div>
+      <div className="relative h-[2px] overflow-hidden" aria-hidden>{nas.loading && <span className="nas-load absolute inset-y-0 left-0 w-1/3 bg-(--accent)" />}</div>
+      <div className="flex items-end gap-1 px-2 pt-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Tabbladen">
+        {nas.tabs.map((t) => (
+          <div key={t.id} role="tab" aria-selected={t.active} className={clsx('group flex items-center shrink-0 min-w-28 max-w-44 h-8 rounded-t-lg border border-b-0 text-xs transition-[background-color,opacity] duration-150 ease-out', t.active ? 'bg-(--input) border-(--border) text-(--text)' : 'border-transparent text-(--muted) opacity-70 hover:opacity-100 hover:bg-white/5')}>
+            <button className="min-w-0 flex-1 text-left truncate pl-2.5 pr-1 h-full" onClick={() => nasCmd({ cmd: 'tab-focus', id: t.id })}>{t.title || t.url || 'Nieuw tabblad'}</button>
+            <button className={clsx('w-7 h-7 sm:w-6 sm:h-6 mr-0.5 rounded-md flex items-center justify-center shrink-0 text-(--muted)', !t.active && 'sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100', 'hover:bg-white/10 hover:text-(--text)')}
+              onClick={() => nasCmd({ cmd: 'tab-close', id: t.id })} aria-label="Tabblad sluiten"><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+          </div>
+        ))}
+        <button className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-(--muted) hover:text-(--text) hover:bg-white/5 transition-colors" disabled={!live} onClick={() => nasCmd({ cmd: 'tab-new' })} aria-label="Nieuw tabblad"><Icon name="plus" className="w-[18px] h-[18px]" /></button>
+      </div>
+    </div>
+  );
   const sep = <span className="w-px h-5 bg-(--border) mx-2 shrink-0" aria-hidden />;
 
   // bottom bar item on phones: icon with a small label, 44 px high
@@ -815,6 +904,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
 
   return createPortal(
     <div ref={root} tabIndex={-1} className="fixed left-0 right-0 top-0 h-dvh z-[70] flex flex-col bg-black outline-none overflow-clip" onContextMenu={(e) => e.preventDefault()}>
+      {compact && nasBar}
       {!compact && (
         <div data-rd-toolbar className="flex items-center gap-1 px-2 py-1.5 border-b border-white/10 text-sm" style={{ background: 'var(--g-bg-base, #111)' }}>
           {pil(false)}
@@ -832,7 +922,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
           <div className="flex items-center gap-0.5">
             <button className={clsx(ib, keysBar && ibOn)} disabled={!control} onClick={() => setKeysBar((k) => !k)} title="Toetsen" aria-label="Toetsen"><Icon name="keyboard" /></button>
             <button className={ib} disabled={!live || !control} onClick={() => setTyping(true)} title="Tekst plakken" aria-label="Tekst plakken"><Icon name="clipboard" /></button>
-            {!isMac && <button className={ib} disabled={!live || busy === 'sas'} onClick={() => void sas()} title="Ctrl+Alt+Del" aria-label="Ctrl+Alt+Del"><Icon name="lock" /></button>}
+            {!isMac && !isNas && <button className={ib} disabled={!live || busy === 'sas'} onClick={() => void sas()} title="Ctrl+Alt+Del" aria-label="Ctrl+Alt+Del"><Icon name="lock" /></button>}
           </div>
           {sep}
           <div className="flex items-center gap-0.5">
@@ -847,11 +937,13 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
           <button className={clsx(ib, 'hover:bg-red-500/80 hover:text-white')} onClick={onClose} title="Sluiten" aria-label="Sluiten"><Icon name="close" /></button>
         </div>
       )}
+      {!compact && nasBar}
 
       <div className="flex-1 min-h-0 flex relative">
       <div ref={viewport} className="flex-1 min-w-0 relative overflow-hidden touch-none select-none">
         <div ref={stage} className="absolute left-0 top-0 origin-top-left leading-[0]" style={{ willChange: 'transform' }}>
-          <canvas ref={canvas} width={16} height={9} className={clsx('block w-full h-full', control ? 'cursor-none' : 'cursor-not-allowed')}
+          <canvas ref={canvas} width={16} height={9} className={clsx('block w-full h-full', !control ? 'cursor-not-allowed' : !isNas && 'cursor-none')}
+            style={isNas && !control ? { cursor: 'not-allowed' } : undefined}
             onPointerMove={mouseMove}
             onPointerLeave={leaveLocal}
             onPointerDown={(e) => { if (e.pointerType === 'touch') return; root.current?.focus(); (e.target as HTMLElement).setPointerCapture?.(e.pointerId); push({ t: 'd', b: btn(e), ...norm(e) }); }}
@@ -864,7 +956,7 @@ export function RemoteDesktop({ d, onClose }: { d: Device; onClose: () => void }
         <div ref={claudeLayer} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 7 }} />
         {/* your own pointer on the desktop: same style as Claude's, in blue with your name */}
         <div ref={localCur} className="absolute left-0 top-0 pointer-events-none" style={{ zIndex: 9, display: 'none', willChange: 'transform' }} aria-hidden>
-          <svg width="24" height="24" viewBox="0 0 24 24" style={{ position: 'absolute', left: -3, top: -2, overflow: 'visible', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.35))' }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" style={{ display: isNas ? 'none' : undefined, position: 'absolute', left: -3, top: -2, overflow: 'visible', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.35))' }}>
             <path d="M3.5 2.2 19.6 11.1c.8.4.7 1.6-.2 1.8l-6.4 1.6-3 5.9c-.4.8-1.6.7-1.8-.2L2.2 3.6c-.2-.9.6-1.7 1.3-1.4Z" fill="#2563EB" stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" />
           </svg>
           <span ref={localPill} className="absolute whitespace-nowrap rounded-full px-2 text-white"

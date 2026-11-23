@@ -1,4 +1,5 @@
 import { orphanResumable, parseDeployMarker, SELFUPDATE_RESUME_KEY, DEPLOY_MARKER_MS } from './services/resumePlan';
+import { closeAllNas } from './services/nasBrowser';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -7,16 +8,19 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { config } from './config';
+import { guardProjectDir } from './services/projectDirGuard';
 import { pool } from './db';
 import { redis } from './redis';
 import { authRouter } from './routes/auth';
 import { i18nRouter } from './routes/i18n';
 import { ensureTranslationsTable } from './services/i18n';
 import { conversationsRouter } from './routes/conversations';
+import { projectsRouter } from './routes/projects';
 import { streamRouter, resumeQueues, resumeAfterRestart } from './routes/stream';
 import { ensureQueueSchema } from './services/messageQueue';
 import { ensureDeviceSchema } from './services/devices';
 import { devicesRouter, resumeDeviceTasks } from './routes/devices';
+import { ensureNasPasswordTables } from './services/nasPasswords';
 import { remoteRouter } from './routes/remote';
 import { lessonsRouter } from './routes/lessons';
 import { agentsRouter } from './routes/agents';
@@ -48,6 +52,8 @@ import { totpRouter } from './routes/totp';
 import { pushRouter } from './routes/push';
 import { telegramRouter } from './routes/telegram';
 import { m365Router } from './routes/m365';
+import { googleRouter } from './routes/google';
+import { ensureSettingsTable } from './services/googleSearchConsole';
 import { startTelegram, ensureTelegramSchema } from './services/telegram/manager';
 import { whatsappRouter } from './routes/whatsapp';
 import { messengerRouter } from './routes/messenger';
@@ -136,7 +142,9 @@ app.get('/internal/active-agents', async (req, res) => {
   const key = process.env.INTERNAL_API_KEY;
   if (!key || req.get('x-internal-key') !== key) { res.status(403).json({ error: 'forbidden' }); return; }
   const { activeAgentCalls } = await import('./services/claudeCode');
-  res.json({ agents: [...activeAgentCalls.values()].map((a) => ({ ...a, minutes: Math.round((Date.now() - a.since) / 60000) })) });
+  // the caller's own run (an agent in its workplace that rolls out itself) does not block: it resumes after the restart
+  const exclude = String(req.query.exclude ?? '');
+  res.json({ agents: [...activeAgentCalls.values()].filter((a) => !exclude || a.conversationId !== exclude).map((a) => ({ ...a, minutes: Math.round((Date.now() - a.since) / 60000) })) });
 });
 
 // Backfill of the learning loop for one user (started from the admin chat via docker exec)
@@ -165,9 +173,11 @@ app.use(rateLimit({
 // ── Routes ────────────────────────────────────────────────────
 app.use('/auth', authRouter);
 app.use('/i18n', i18nRouter);
+app.use('/projects', projectsRouter);
 app.use('/conversations', conversationsRouter);
 app.use('/conversations', streamRouter);
 app.use('/claude-auth', claudeAuthRouter);
+app.use('/connectors/google', googleRouter);
 app.use('/connectors', connectorsRouter);
 app.use('/admin', adminRouter);
 app.use('/usage', usageRouter);
@@ -208,6 +218,8 @@ async function start() {
   // Run pending migrations
   try {
     await ensureTranslationsTable();
+    await ensureNasPasswordTables();
+    await ensureSettingsTable();
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversation_attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -220,6 +232,21 @@ async function start() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(120) NOT NULL,
+        color VARCHAR(16) NOT NULL DEFAULT 'terracotta',
+        icon VARCHAR(32) NOT NULL DEFAULT 'folder',
+        instructions TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)');
+    await pool.query('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_conv_att_conv ON conversation_attachments(conversation_id)');
     // Sent attachments leave the composer (they stay visible in the message they went with)
     await pool.query('ALTER TABLE conversation_attachments ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ');
@@ -308,6 +335,8 @@ async function start() {
   }
 
 
+  try { guardProjectDir(); } catch (err) { console.error('✗ Project dir guard failed:', err); }
+
   // Verify Redis connection
   try {
     await redis.ping();
@@ -348,6 +377,7 @@ async function start() {
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
+  await closeAllNas().catch(() => undefined);
   await pool.end();
   await redis.quit();
   process.exit(0);

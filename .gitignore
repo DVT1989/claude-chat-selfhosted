@@ -18,8 +18,8 @@ id_rsa*
 *.token
 .sudo
 # backups and dumps
-backups/
-backups-*/
+/backups/
+/backups-*/
 _backup*/
 *.bak
 *.bak-*
@@ -35,9 +35,9 @@ __pycache__/
 *.pyc
 .venv/
 # runtime data and logs
-data/
-logs/
-uploads/
+/data/
+/logs/
+/uploads/
 # os and editor
 .idea/
 @eaDir/

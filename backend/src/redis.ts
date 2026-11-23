@@ -30,6 +30,17 @@ export const sessions = {
       if (uid === userId) await redis.del(key);
     }
   },
+
+  // Delete all sessions for a user except the one in use (other devices must re-login)
+  delAllExcept: async (userId: string, keepTokenHash: string) => {
+    const keep = `session:${keepTokenHash}`;
+    const keys = await redis.keys(`session:*`);
+    for (const key of keys) {
+      if (key === keep) continue;
+      const uid = await redis.get(key);
+      if (uid === userId) await redis.del(key);
+    }
+  },
 };
 
 // Rate limiting helpers

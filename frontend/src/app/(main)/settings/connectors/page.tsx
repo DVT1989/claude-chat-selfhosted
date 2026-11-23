@@ -7,6 +7,8 @@ import { useTranslations } from '@/lib/i18n';
 import { connectors as connApi } from '@/lib/api';
 import type { Connector } from '@/types';
 import BrowserConnectorCard from '@/components/devices/BrowserConnectorCard';
+import GoogleSearchConsoleCard, { GoogleLogo } from '@/components/GoogleSearchConsoleCard';
+import { api as devApi, ago, type Device } from '@/components/devices/shared';
 
 const CONNECTOR_TYPES = [
   { value: 'git',    label: 'Git',       fields: [{ key: 'url',  label: 'Repository URL', type: 'text' }],                                                                credFields: [{ key: 'token', label: 'Access Token', type: 'password' }, { key: 'username', label: 'Gebruikersnaam', type: 'text' }] },
@@ -17,7 +19,20 @@ const CONNECTOR_TYPES = [
   { value: 'smb',    label: 'SMB/Samba', fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'share', label: 'Share naam', type: 'text' }],                     credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }] },
   { value: 'focustrack', label: 'FocusTrack', fields: [{ key: 'url', label: 'Serveradres, bijv. https://focustrack.example.com', type: 'text' }],                         credFields: [{ key: 'key', label: 'Koppelingssleutel (AIO-site › API-sleutels › soort Koppeling)', type: 'password' }] },
   { value: 'python', label: 'Python',    fields: [],                                                                                                                       credFields: [] },
+  // eigen flow (inloggen of koppelcode), geen formulier
+  { value: 'google-search-console', label: 'Google Search Console', fields: [], credFields: [] },
+  { value: 'browser', label: 'Browser (Chrome)', fields: [], credFields: [] },
 ] as const;
+const SPECIAL_TYPES = ['google-search-console', 'browser'];
+
+const ChromeIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z" />
+  </svg>
+);
+const EditIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+);
 
 type ConnectorTypeValue = (typeof CONNECTOR_TYPES)[number]['value'];
 
@@ -36,6 +51,8 @@ function ConnectorsPage() {
   const [notice, setNotice] = useState('');
   const [testing, setTesting] = useState<string | null>(null);
   const [testMsg, setTestMsg] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [browsers, setBrowsers] = useState<Device[]>([]);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -44,7 +61,16 @@ function ConnectorsPage() {
     } catch { /* ignore */ } finally { setLoaded(true); }
   }
 
-  useEffect(() => { load(); }, []);
+  async function loadBrowsers() {
+    try { const r = await devApi<{ devices: Device[] }>(''); setBrowsers(r.devices.filter((d) => d.os === 'browser')); } catch { /* ignore */ }
+  }
+
+  useEffect(() => {
+    load(); loadBrowsers();
+    // terugkeer van Google-login: formulier met de Google-kaart openen zodat de melding zichtbaar is
+    if (new URLSearchParams(window.location.search).get('google')) { setType('google-search-console'); setShowForm(true); }
+  }, []);
+  const special = SPECIAL_TYPES.includes(type);
 
   const selectedType = CONNECTOR_TYPES.find((ct) => ct.value === type);
 
@@ -150,7 +176,6 @@ function ConnectorsPage() {
         </div>
       )}
 
-      <BrowserConnectorCard />
 
       {showForm && (
         <form onSubmit={handleSubmit} className="mb-6 bg-(--input) border border-(--border) rounded-card p-4 space-y-3">
@@ -159,9 +184,9 @@ function ConnectorsPage() {
           </p>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
+            <div className={special ? 'hidden' : ''}>
               <label className="block text-xs text-(--muted) mb-1">{t('name')}</label>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required={!special}
                 className="w-full bg-(--bg) border border-(--border) rounded-lg px-3 py-2 text-(--text) text-sm focus:outline-none focus:border-(--accent)"
                 placeholder={t('namePlaceholder')} />
             </div>
@@ -176,6 +201,11 @@ function ConnectorsPage() {
               </select>
             </div>
           </div>
+
+          {type === 'google-search-console' && (
+            <GoogleSearchConsoleCard embedded connected={list.some((c) => c.type === 'google-search-console')} onChanged={load} />
+          )}
+          {type === 'browser' && <BrowserConnectorCard mode="add" onChanged={() => { loadBrowsers(); setShowForm(false); resetForm(); }} />}
 
           {selectedType?.fields.map((f) => (
             <div key={f.key}>
@@ -213,27 +243,27 @@ function ConnectorsPage() {
             </>
           )}
 
-          <div className="flex gap-2 pt-1">
+          {!special && <div className="flex gap-2 pt-1">
             <button type="submit" className="bg-(--accent-strong) hover:brightness-110 text-white text-sm px-4 py-2 rounded-control transition-colors">
               {editingId ? 'Opslaan' : t('save')}
             </button>
             <button type="button" onClick={() => { resetForm(); setShowForm(false); }} className="text-(--muted) hover:text-(--text) text-sm px-4 py-2 rounded-lg transition-colors">
               {tCommon('cancel')}
             </button>
-          </div>
+          </div>}
         </form>
       )}
 
       <div className="space-y-2">
-        {loaded && list.length === 0 && (
+        {loaded && list.length === 0 && browsers.length === 0 && (
           <EmptyState icon={NavIcons.connectors('w-5 h-5')} title="Nog geen connectoren"
             text={t('empty').replace('Sudo of Python', 'Sudo, Python of FocusTrack')}
             action={showForm ? undefined : { label: 'Connector toevoegen', onClick: () => { resetForm(); setShowForm(true); } }} />
         )}
 
         {list.map((conn, i) => (
-          <div key={conn.id} className="conn-row wa-row-in" style={{ '--i': Math.min(i, 10) } as React.CSSProperties}>
-            <span className="conn-type" aria-hidden>{conn.type.slice(0, 3).toUpperCase()}</span>
+          <div key={conn.id} className="conn-row flex-wrap wa-row-in" style={{ '--i': Math.min(i, 10) } as React.CSSProperties}>
+            <span className="conn-type" aria-hidden>{conn.type === 'google-search-console' ? <GoogleLogo className="w-4 h-4" /> : conn.type.slice(0, 3).toUpperCase()}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-medium text-(--text) text-sm truncate">{conn.name}</span>
@@ -273,13 +303,47 @@ function ConnectorsPage() {
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
                 )}
               </button>
-              <button onClick={() => startEdit(conn)} aria-label={`${conn.name} bewerken`} title="Bewerken" className="icon-btn">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+              <button onClick={() => conn.type === 'google-search-console' ? setExpanded((x) => x === conn.id ? null : conn.id) : startEdit(conn)}
+                aria-label={`${conn.name} bewerken`} aria-expanded={conn.type === 'google-search-console' ? expanded === conn.id : undefined} title="Bewerken"
+                className="icon-btn">
+                <EditIcon />
               </button>
               <button onClick={() => handleDelete(conn.id)} aria-label={`${conn.name} verwijderen`} title={tCommon('delete')} className="icon-btn is-danger">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
               </button>
             </div>
+            {expanded === conn.id && (
+              <div className="w-full user-edit">
+                <GoogleSearchConsoleCard embedded connected onChanged={load} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {browsers.map((b, i) => (
+          <div key={b.id} className="conn-row flex-wrap wa-row-in" style={{ '--i': Math.min(list.length + i, 10) } as React.CSSProperties}>
+            <span className="conn-type" aria-hidden><ChromeIcon /></span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-medium text-(--text) text-sm truncate">{b.name}</span>
+                <span className="hidden sm:inline text-[11px] text-(--muted) uppercase tracking-wide shrink-0">browser</span>
+              </div>
+            </div>
+            <span className={`conn-state ${b.online ? 'is-on' : ''}`} title={b.online ? 'Online' : `Offline, ${ago(b.last_seen_at)}`}>
+              <span className="conn-dot" aria-hidden />
+              {b.online ? 'Online' : 'Offline'}
+            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button onClick={() => setExpanded((x) => x === b.id ? null : b.id)} aria-label={`${b.name} bewerken`} aria-expanded={expanded === b.id} title="Bewerken"
+                className="icon-btn">
+                <EditIcon />
+              </button>
+            </div>
+            {expanded === b.id && (
+              <div className="w-full user-edit">
+                <BrowserConnectorCard mode="manage" onlyId={b.id} onChanged={loadBrowsers} />
+              </div>
+            )}
           </div>
         ))}
       </div>

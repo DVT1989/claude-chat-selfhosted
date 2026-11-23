@@ -20,6 +20,7 @@ import { requireAuth, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import * as dev from '../services/devices';
 import { query } from '../db';
+import { getNas, onNasClosed, normalizeUrl, type NasBrowser, type NasEvent, type NasState } from '../services/nasBrowser';
 
 export const remoteRouter = Router();
 
@@ -45,6 +46,8 @@ interface Session {
   claudeOnly: boolean;
   /** last sign of life from the helper (frame, shot or input poll), and whether viewers were told it stalled */
   agentAt: number; stalled: boolean;
+  /** Browser (NAS): the browser runs in this process, no agent. Frames and input go straight to it. */
+  nas: NasBrowser | null; unsub: (() => void) | null;
   shotReq: number; shot: { w: number; h: number; jpeg: Buffer; at: number } | null; shotWaiters: Array<() => void>; claudeAt: number;
 }
 const sessions = new Map<string, Session>();
@@ -70,6 +73,12 @@ function ctl(s: Session, extra: Record<string, unknown> = {}) {
 }
 
 function flushWaiter(s: Session): void {
+  if (s.nas) {
+    if (s.wantKey) { s.wantKey = false; s.nas.resend(); }
+    s.ctlDirty = false; s.shotReq = 0;
+    if (s.events.length) s.nas.input(s.events.splice(0, s.events.length) as NasEvent[]);
+    return;
+  }
   const w = s.waiter;
   if (!w) return;
   if (!s.ended && !s.events.length && !s.wantKey && !s.ctlDirty && !s.shotReq) return;
@@ -85,6 +94,7 @@ async function end(s: Session, reason: string): Promise<void> {
   Object.values(s.timers).forEach((t) => t && clearTimeout(t));
   if (s.timers.ping) clearInterval(s.timers.ping);
   flushWaiter(s);
+  if (s.unsub) { s.unsub(); s.unsub = null; }
   for (const v of s.viewers) { status(v, { status: 'ended', reason }); try { v.res.end(); } catch { /* gone */ } }
   s.viewers.clear();
   // keep it a minute so the helper still gets "stop" instead of a bare 404
@@ -128,7 +138,7 @@ const DEAD_MS = 45_000;
 setInterval(() => {
   const now = Date.now();
   for (const s of sessions.values()) {
-    if (s.ended || !s.firstFrame) continue;
+    if (s.ended || !s.firstFrame || s.nas) continue;
     const quiet = now - s.agentAt;
     if (quiet > DEAD_MS) { void end(s, 'de pc reageert niet meer (uitgeschakeld of geen netwerk)'); continue; }
     if (quiet > STALL_MS && !s.stalled) { s.stalled = true; for (const v of s.viewers) status(v, { status: 'stalled' }); }
@@ -142,14 +152,7 @@ export function endDeviceSessions(deviceId: string, reason: string): number {
   return n;
 }
 
-remoteRouter.post('/agent/:sid/frame', express.raw({ type: 'application/octet-stream', limit: '40mb' }), (req: Request, res: Response) => {
-  const s = agentSession(req);
-  if (!s) { res.status(404).json({ stop: true }); return; }
-  if (s.ended) { res.json({ stop: true }); return; }
-  const body = req.body as Buffer;
-  if (!Buffer.isBuffer(body) || body.length < 18 || body[0] !== 1) { res.status(400).json({ error: 'ongeldig frame' }); return; }
-  if (!s.firstFrame) { s.firstFrame = Date.now(); if (s.timers.start) clearTimeout(s.timers.start); }
-  s.frames++; s.bytes += body.length;
+function deliverFrame(s: Session, body: Buffer): void {
   const isKey = (body[1] & 1) === 1;
   const head = Buffer.alloc(4); head.writeUInt32LE(body.length);
   for (const v of s.viewers) {
@@ -158,6 +161,27 @@ remoteRouter.post('/agent/:sid/frame', express.raw({ type: 'application/octet-st
     if (v.res.writableNeedDrain) { v.needKey = true; s.wantKey = true; continue; }
     try { v.res.write(head); v.res.write(body); v.needKey = false; } catch { /* gone */ }
   }
+}
+
+/** A screencast JPEG as one full-screen key rect in the agent frame format (no cursor: the page draws its own). */
+function nasFrame(jpeg: Buffer, w: number, h: number): Buffer {
+  const b = Buffer.alloc(30 + jpeg.length);
+  b[0] = 1; b[1] = 1; b.writeUInt16LE(w, 2); b.writeUInt16LE(h, 4); b.writeUInt16LE(1, 6);
+  b.writeInt32LE(-1, 8); b.writeInt32LE(0, 12); b.writeUInt16LE(1, 16);
+  b.writeUInt16LE(0, 18); b.writeUInt16LE(0, 20); b.writeUInt16LE(w, 22); b.writeUInt16LE(h, 24); b.writeUInt32LE(jpeg.length, 26);
+  jpeg.copy(b, 30);
+  return b;
+}
+
+remoteRouter.post('/agent/:sid/frame', express.raw({ type: 'application/octet-stream', limit: '40mb' }), (req: Request, res: Response) => {
+  const s = agentSession(req);
+  if (!s) { res.status(404).json({ stop: true }); return; }
+  if (s.ended) { res.json({ stop: true }); return; }
+  const body = req.body as Buffer;
+  if (!Buffer.isBuffer(body) || body.length < 18 || body[0] !== 1) { res.status(400).json({ error: 'ongeldig frame' }); return; }
+  if (!s.firstFrame) { s.firstFrame = Date.now(); if (s.timers.start) clearTimeout(s.timers.start); }
+  s.frames++; s.bytes += body.length;
+  deliverFrame(s, body);
   res.json(ctl(s));
 });
 
@@ -244,7 +268,44 @@ async function noticeOn(userId: string): Promise<boolean> {
 
 type DeviceInfo = NonNullable<Awaited<ReturnType<typeof dev.getDevice>>>;
 
+async function openNasSession(d: DeviceInfo, userId: string, ip: string, by: 'viewer' | 'claude'): Promise<Session> {
+  if (d.os !== 'nasbrowser' || !d.enabled) throw new AppError(409, `${d.name} is niet beschikbaar`);
+  let nas: NasBrowser;
+  try { nas = await getNas(userId); }
+  catch (err) { throw new AppError(502, `${dev.NAS_NAME} starten mislukt: ${String((err as Error).message).split('\n')[0].slice(0, 200)}`); }
+  const sid = randomBytes(16).toString('hex');
+  const s: Session = {
+    sid, key: randomBytes(24).toString('hex'), deviceId: d.id, deviceName: d.name, userId, ip,
+    viewers: new Set(), events: [], waiter: null, wantKey: true, quality: 55, scale: 1, ctlDirty: false,
+    started: Date.now(), firstFrame: 0, frames: 0, bytes: 0, control: false, timers: {}, ended: false,
+    shotReq: 0, shot: null, shotWaiters: [], claudeAt: by === 'claude' ? Date.now() : 0,
+    userName: '', nameSent: true, notice: false, accent: '', initials: '', avatar: null, claudeOnly: by === 'claude', agentAt: Date.now(), stalled: false,
+    nas, unsub: null,
+  };
+  s.unsub = nas.subscribe({
+    frame: (jpeg, w, h) => {
+      if (s.ended) return;
+      if (!s.firstFrame) { s.firstFrame = Date.now(); for (const v of s.viewers) status(v, { status: 'live' }); }
+      const body = nasFrame(jpeg, w, h);
+      s.frames++; s.bytes += body.length;
+      deliverFrame(s, body);
+    },
+    state: (st: NasState) => { for (const v of s.viewers) status(v, { status: 'tabs', ...st }); },
+    cursor: (c: string) => { for (const v of s.viewers) status(v, { status: 'cursor', c }); },
+  });
+  sessions.set(sid, s);
+  scheduleIdle(s);
+  await auditLog(userId, 'device.remote.start', 'device', d.id, ip, { device: d.name, by, nas: true });
+  return s;
+}
+
+// the browser closed itself (idle, crash): end the viewer sessions with that reason
+onNasClosed((userId, reason) => {
+  for (const s of sessions.values()) if (s.nas && s.userId === userId && !s.ended) void end(s, `de browser is gestopt (${reason})`);
+});
+
 async function openSession(d: DeviceInfo, userId: string, ip: string, quality: number, scale: number, by: 'viewer' | 'claude'): Promise<Session> {
+  if (d.os === 'nasbrowser') return openNasSession(d, userId, ip, by);
   if (!d.online) throw new AppError(409, `${d.name} is offline`);
   if (d.os !== 'windows' && d.os !== 'darwin') throw new AppError(409, 'Meekijken werkt alleen op Windows en macOS');
   if (d.os === 'darwin' && !atLeast(d.agent_version, MAC_MIN)) throw new AppError(409, `Agent ${d.agent_version ?? '?'} kan op een Mac nog niet meekijken; werk de agent bij naar ${MAC_MIN.join('.')} of nieuwer`);
@@ -257,6 +318,7 @@ async function openSession(d: DeviceInfo, userId: string, ip: string, quality: n
     started: Date.now(), firstFrame: 0, frames: 0, bytes: 0, control: false, timers: {}, ended: false,
     shotReq: 0, shot: null, shotWaiters: [], claudeAt: by === 'claude' ? Date.now() : 0,
     userName: await firstName(userId), nameSent: false, notice: await noticeOn(userId), ...(await looks(userId)), claudeOnly: by === 'claude', agentAt: Date.now(), stalled: false,
+    nas: null, unsub: null,
   };
   sessions.set(sid, s);
   const r = await dev.runJob(d.id, { type: 'remote', session: sid, key }, 20_000);
@@ -291,6 +353,7 @@ remoteRouter.get('/:id/s/:sid/stream', requireAuth, (req: Request, res: Response
     s.wantKey = true;
     flushWaiter(s);
     status(v, { status: s.firstFrame ? 'live' : 'starting' });
+    if (s.nas) void s.nas.state().then((st) => status(v, { status: 'tabs', ...st }));
     // keeps proxies from closing a quiet stream (static screen)
     const ping = setInterval(() => { const z0 = Buffer.alloc(4); try { res.write(z0); } catch { /* gone */ } }, 15_000);
     res.on('close', () => { clearInterval(ping); s.viewers.delete(v); if (!s.viewers.size) scheduleIdle(s); });
@@ -321,6 +384,50 @@ remoteRouter.post('/:id/s/:sid/input', requireAuth, (req: Request, res: Response
     if (b.quality && b.quality !== s.quality) { s.quality = b.quality; s.ctlDirty = true; }
     if (b.scale && b.scale !== s.scale) { s.scale = b.scale; s.ctlDirty = true; }
     flushWaiter(s);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// address bar of the Browser (NAS): back, forward, reload, navigate, tabs
+const browserCmd = z.discriminatedUnion('cmd', [
+  z.object({ cmd: z.enum(['back', 'forward', 'reload', 'stop']) }),
+  z.object({ cmd: z.literal('navigate'), url: z.string().min(1).max(4000) }),
+  z.object({ cmd: z.literal('tab-new'), url: z.string().max(4000).optional() }),
+  z.object({ cmd: z.enum(['tab-close', 'tab-focus']), id: z.number().int().min(0) }),
+]);
+
+remoteRouter.post('/:id/s/:sid/browser', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const s = userSession(req);
+    if (!s.nas) throw new AppError(400, `Alleen voor ${dev.NAS_NAME}`);
+    const c = browserCmd.parse(req.body ?? {});
+    s.control = true;
+    await s.nas.command(c);
+    if (c.cmd === 'navigate') await auditLog(s.userId, 'device.browser.navigate', 'device', s.deviceId, s.ip, { device: s.deviceName, nas: true, by: 'viewer', url: normalizeUrl(c.url).slice(0, 300) }).catch(() => undefined);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+const pwBody = z.discriminatedUnion('action', [
+  z.object({ action: z.enum(['save', 'never', 'dismiss']) }),
+  z.object({ action: z.literal('fill'), id: z.string().uuid() }),
+]);
+
+/** Password manager bar: answer to "save password?" and manual fill. Never carries a password. */
+remoteRouter.post('/:id/s/:sid/pw', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const s = userSession(req);
+    if (!s.nas) throw new AppError(400, `Alleen voor ${dev.NAS_NAME}`);
+    const b = pwBody.parse(req.body ?? {});
+    s.control = true;
+    if (b.action === 'fill') {
+      const r = await s.nas.pwFill(b.id).catch((err: Error) => { throw new AppError(409, err.message); });
+      await auditLog(s.userId, 'device.browser.password.fill', 'device', s.deviceId, s.ip, { device: s.deviceName, nas: true, by: 'viewer', account: b.id }).catch(() => undefined);
+      res.json({ ok: true, ...r });
+      return;
+    }
+    await s.nas.pwAnswer(b.action);
+    if (b.action === 'save') await auditLog(s.userId, 'device.browser.password.save', 'device', s.deviceId, s.ip, { device: s.deviceName, nas: true }).catch(() => undefined);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -369,7 +476,7 @@ function queue(s: Session, ...events: Array<Record<string, unknown>>): void {
 }
 
 async function claudeSession(d: DeviceInfo, userId: string): Promise<Session> {
-  if (!atLeast(d.agent_version, CLAUDE_MIN)) throw new AppError(409, `Agent ${d.agent_version ?? '?'} kan nog geen schermafbeeldingen voor Claude maken; werk de agent bij naar ${CLAUDE_MIN.join('.')}`);
+  if (d.os !== 'nasbrowser' && !atLeast(d.agent_version, CLAUDE_MIN)) throw new AppError(409, `Agent ${d.agent_version ?? '?'} kan nog geen schermafbeeldingen voor Claude maken; werk de agent bij naar ${CLAUDE_MIN.join('.')}`);
   const open = [...sessions.values()].filter((x) => x.deviceId === d.id && !x.ended).sort((a, b) => b.started - a.started);
   const s = open[0] ?? await openSession(d, userId, '', 55, 1, 'claude');
   s.claudeAt = Date.now();
@@ -380,6 +487,11 @@ async function claudeSession(d: DeviceInfo, userId: string): Promise<Session> {
 export async function claudeScreen(d: DeviceInfo, userId: string): Promise<{ jpeg: Buffer; w: number; h: number }> {
   const s = await claudeSession(d, userId);
   tell(s, { t: 'look' });
+  if (s.nas) {
+    const shot = await s.nas.screenshot().catch((err: Error) => { throw new AppError(502, `Schermafbeelding mislukt: ${err.message.split('\n')[0]}`); });
+    s.shot = { ...shot, at: Date.now() };
+    return shot;
+  }
   const before = s.shot?.at ?? 0;
   const got = new Promise<void>((resolve) => s.shotWaiters.push(resolve));
   s.shotReq = SHOT_W;

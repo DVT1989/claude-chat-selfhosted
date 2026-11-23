@@ -5,7 +5,7 @@ installation, logs in with their own Claude account, and chats with it from the 
 Telegram or WhatsApp. The app is a shell: it starts the official `claude` CLI and shows the stream.
 Nothing is shared or resold; each user uses their own subscription or API key.
 
-Built and used daily on a Synology NAS. The interface is in Dutch and English.
+Runs on any Linux host with Docker (built and used daily on a Synology NAS). The interface is in Dutch and English.
 
 ## Features
 
@@ -29,12 +29,14 @@ Built and used daily on a Synology NAS. The interface is in Dutch and English.
 
 ## Install
 
-The admin chat and `selfupdate` expect the project at `/volume1/docker/claude-chat` (the Synology path).
-On another host, create that path or a symlink to it.
+Clone the project anywhere. `./setup.sh` writes its absolute path to `PROJECT_DIR` in `.env`; the backend
+mounts it at that same path, which the admin chat, `selfupdate` and backups use. Pick a path with its own
+parent dir (like `/srv/claude-chat`), so normal chats cannot read the source and `.env`.
+Set `HOST_LABEL` in `.env` to what the host is called in prompts (`server` by default, e.g. `NAS` or `VPS`).
 
 ```sh
-sudo mkdir -p /volume1/docker && cd /volume1/docker
-git clone https://github.com/DVT1989/claude-chat-selfhosted.git claude-chat
+cd /srv
+sudo git clone https://github.com/DVT1989/claude-chat-selfhosted.git claude-chat
 cd claude-chat
 ./setup.sh https://claude.example.com    # or leave out for http://localhost:15980
 docker compose up -d --build

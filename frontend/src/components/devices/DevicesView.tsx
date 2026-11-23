@@ -18,7 +18,8 @@ function ManageRow({ d, latest, onChanged, showOwner }: { d: Device; latest: str
     setBusy(true); setErr(''); setNote('');
     try { await fn(); if (done) setNote(done); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
-  const outdated = !!latest && !!d.agent_version && d.agent_version !== latest;
+  const isNas = d.os === 'nasbrowser';
+  const outdated = !isNas && !!latest && !!d.agent_version && d.agent_version !== latest;
   const mb = 'max-sm:min-h-[44px] max-sm:px-2.5 whitespace-nowrap justify-center';
   return (
     <div className="px-4 py-3.5">
@@ -28,7 +29,7 @@ function ManageRow({ d, latest, onChanged, showOwner }: { d: Device; latest: str
           <div className="flex-1 min-w-0">
             <div className={clsx('text-sm font-medium truncate', d.enabled ? 'text-(--text)' : 'text-(--muted)')}>{d.name}</div>
             <div className="text-xs text-(--muted) line-clamp-2 sm:line-clamp-1 break-words">
-              {osLabel(d.os)} · {d.online ? 'online' : `offline, ${ago(d.last_seen_at)}`} · agent {d.agent_version ?? '?'}{showOwner && d.owner ? ` · ${d.owner}` : ''}
+              {osLabel(d.os)} · {d.os === 'nasbrowser' ? 'altijd beschikbaar' : <>{d.online ? 'online' : `offline, ${ago(d.last_seen_at)}`} · agent {d.agent_version ?? '?'}</>}{showOwner && d.owner ? ` · ${d.owner}` : ''}
             </div>
           </div>
         </div>
@@ -38,16 +39,16 @@ function ManageRow({ d, latest, onChanged, showOwner }: { d: Device; latest: str
               Bijwerken naar {latest}
             </button>
           )}
-          <button className={`${ghost} ${mb}`} disabled={busy} onClick={() => {
+          {!isNas && <button className={`${ghost} ${mb}`} disabled={busy} onClick={() => {
             const name = prompt('Naam', d.name)?.trim();
             if (name && name !== d.name) void act(() => api(`/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name }) }));
-          }}>Naam</button>
+          }}>Naam</button>}
           <button className={`${ghost} ${mb}`} disabled={busy} onClick={() => act(() => api(`/${d.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !d.enabled }) }))}>
             {d.enabled ? 'Uitschakelen' : 'Inschakelen'}
           </button>
-          <button className={`${btn} ${mb} border border-(--bad)/30 text-(--bad) hover:bg-red-500/10`} disabled={busy} onClick={() => {
+          {!isNas && <button className={`${btn} ${mb} border border-(--bad)/30 text-(--bad) hover:bg-red-500/10`} disabled={busy} onClick={() => {
             if (confirm(`${d.name} ontkoppelen? De agent stopt daarna; verwijder hem via Apps & onderdelen (Mac: uninstall.sh).`)) void act(() => api(`/${d.id}`, { method: 'DELETE' }));
-          }}>Ontkoppelen</button>
+          }}>Ontkoppelen</button>}
         </div>
       </div>
       {err && <p className="text-xs text-(--bad) mt-1">{err}</p>}
@@ -131,7 +132,7 @@ function MonitorTable({ devices, latest, showOwner }: { devices: Device[]; lates
                 !d.enabled && 'opacity-60')}>
               <span className="flex items-center gap-2.5 min-w-0">
                 <span className="relative shrink-0">
-                  <span className="w-8 h-8 rounded-lg bg-indigo-500 text-white flex items-center justify-center"><DeviceIcon className="w-4 h-4" /></span>
+                  <span className={clsx('w-8 h-8 rounded-lg text-white flex items-center justify-center', d.os === 'nasbrowser' ? 'bg-sky-600' : 'bg-indigo-500')}><DeviceIcon os={d.os} className="w-4 h-4" /></span>
                   <span className={clsx('absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-(--input)', d.online ? 'bg-green-500' : 'bg-zinc-400')} />
                 </span>
                 <span className="min-w-0">
@@ -147,7 +148,7 @@ function MonitorTable({ devices, latest, showOwner }: { devices: Device[]; lates
               <span className="hidden lg:flex items-center gap-2 text-xs">
                 {inv?.disks?.length ? <><UsageBar pct={disk} className="flex-1" /><span className="tabular-nums text-(--muted) w-9 text-right">{disk}%</span></> : <span className="text-(--muted)">-</span>}
               </span>
-              <span className="hidden lg:block text-xs text-(--muted)">{d.online ? <span className="text-(--ok)">Online</span> : ago(d.last_seen_at)}</span>
+              <span className="hidden lg:block text-xs text-(--muted)">{d.os === 'nasbrowser' ? <span className="text-(--ok)">Altijd beschikbaar</span> : d.online ? <span className="text-(--ok)">Online</span> : ago(d.last_seen_at)}</span>
               <span className="hidden lg:flex flex-wrap gap-1">
                 {alerts.length === 0 ? <Badge tone="ok">In orde</Badge> : alerts.slice(0, 3).map((a) => <Badge key={a.text} tone={a.tone}>{a.text}</Badge>)}
                 {alerts.length > 3 && <Badge tone="muted">+{alerts.length - 3}</Badge>}

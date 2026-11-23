@@ -6,7 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import clsx from 'clsx';
 import { useChatStore, useAuthStore } from '@/lib/store';
-import { conversations as convApi, auth as authApi } from '@/lib/api';
+import { conversations as convApi, auth as authApi, projectsApi } from '@/lib/api';
 import UserAvatar from '@/components/UserAvatar';
 import ConversationList from '@/components/ConversationList';
 import { NavIcons, isNavActive, isItemActive, navColor, type NavItem } from '@/components/navItems';
@@ -24,7 +24,7 @@ export default function Sidebar({ withList = true }: { withList?: boolean }) {
   const t = useTranslations('sidebar');
   const router = useRouter();
   const pathname = usePathname() ?? '';
-  const { setConversations, setRefreshConversationId } = useChatStore();
+  const { setConversations, setProjects, setRefreshConversationId } = useChatStore();
   const { setUser } = useAuthStore();
   const { top, groups } = useNav();
   // gliding marker on the rail's left edge, in the active section's colour
@@ -46,7 +46,11 @@ export default function Sidebar({ withList = true }: { withList?: boolean }) {
       const res = await convApi.list();
       setConversations(res.conversations);
     } catch { /* ignore */ }
-  }, [setConversations]);
+    try {
+      const pr = await projectsApi.list();
+      setProjects(pr.projects);
+    } catch { /* ignore */ }
+  }, [setConversations, setProjects]);
 
   // Keep user store fresh (persist provides instant load; this syncs latest from server)
   useEffect(() => {

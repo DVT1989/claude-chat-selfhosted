@@ -7,7 +7,7 @@ import { useAuthStore } from '@/lib/store';
 import { NavIcons, navColor } from '@/components/navItems';
 
 const TOOLS = [
-  { href: '/settings/adminprompt', title: 'Admin-chat', text: 'Laat Claude de app en de containers op de NAS aanpassen.', icon: NavIcons.terminal },
+  { href: '/settings/adminprompt', title: 'Admin-chat', text: 'Laat Claude de app en de containers op de server aanpassen.', icon: NavIcons.terminal },
   { href: '/settings/admin', title: 'Gebruikers', text: 'Accounts aanmaken, rollen wijzigen, sessies bekijken.', icon: NavIcons.users },
   { href: '/settings/backups', title: 'Backups', text: 'Dagelijkse back-ups bekijken, maken, downloaden of terugzetten.', icon: NavIcons.backups },
 ];

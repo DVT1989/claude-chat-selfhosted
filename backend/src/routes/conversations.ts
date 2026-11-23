@@ -18,12 +18,12 @@ conversationsRouter.get('/', async (req: Request, res: Response, next) => {
 
     const result = await query<{
       id: string; title: string; model: string; status: string;
-      provider_account_id: string | null; token_count: number;
+      provider_account_id: string | null; token_count: number; project_id: string | null;
       updated_at: string; created_at: string;
       last_role: string | null; last_tail: string | null;
     }>(
       `SELECT c.id, c.title, c.model, c.status, c.provider_account_id,
-              c.token_count, c.updated_at, c.created_at,
+              c.token_count, c.project_id, c.updated_at, c.created_at,
               lm.role AS last_role, lm.tail AS last_tail
        FROM conversations c
        -- Last message for the WhatsApp-style preview line; only its tail (tool answers can be huge)
@@ -110,6 +110,7 @@ conversationsRouter.post('/', async (req: Request, res: Response, next) => {
       connectorIds: z.array(z.string().uuid()).optional(),
       /** a Claude session on this device: kept out of the chat list, shown in the device's activities */
       deviceId: z.string().uuid().optional(),
+      projectId: z.string().uuid().optional(),
     });
     const body = schema.parse(req.body);
 
@@ -123,18 +124,24 @@ conversationsRouter.post('/', async (req: Request, res: Response, next) => {
       initialModel = u.rows[0]?.default_model ?? 'sonnet';
     }
 
+    if (body.projectId) {
+      const pr = await query('SELECT id FROM projects WHERE id = $1 AND user_id = $2', [body.projectId, req.user!.userId]);
+      if (!pr.rows[0]) throw new AppError(404, 'Project not found');
+    }
+
     const result = await query<{
-      id: string; title: string; model: string; status: string;
+      id: string; title: string; model: string; status: string; project_id: string | null;
       token_count: number; updated_at: string; created_at: string;
     }>(
-      `INSERT INTO conversations (user_id, title, model, metadata)
-       VALUES ($1, $2, $3, $4::jsonb)
-       RETURNING id, title, model, status, token_count, updated_at, created_at`,
+      `INSERT INTO conversations (user_id, title, model, metadata, project_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5)
+       RETURNING id, title, model, status, project_id, token_count, updated_at, created_at`,
       [
         req.user!.userId,
         body.title ?? 'New conversation',
         initialModel,
         JSON.stringify(body.deviceId ? { device_id: body.deviceId, device_log: true } : {}),
+        body.projectId ?? null,
       ],
     );
 
@@ -189,6 +196,8 @@ conversationsRouter.put('/:id', async (req: Request, res: Response, next) => {
       model: z.string().max(100).optional(),
       status: z.enum(['active', 'archived']).optional(),
       connectorIds: z.array(z.string().uuid()).optional(),
+      /** move into a project, or null to take it out */
+      projectId: z.string().uuid().nullable().optional(),
     });
     const body = schema.parse(req.body);
     const { id } = req.params as Record<string, string>;
@@ -204,6 +213,13 @@ conversationsRouter.put('/:id', async (req: Request, res: Response, next) => {
     if (body.title !== undefined) { updates.push(`title = $${idx++}`); values.push(body.title); }
     if (body.model !== undefined) { updates.push(`model = $${idx++}`); values.push(body.model); }
     if (body.status !== undefined) { updates.push(`status = $${idx++}`); values.push(body.status); }
+    if (body.projectId !== undefined) {
+      if (body.projectId) {
+        const pr = await query('SELECT id FROM projects WHERE id = $1 AND user_id = $2', [body.projectId, req.user!.userId]);
+        if (!pr.rows[0]) throw new AppError(404, 'Project not found');
+      }
+      updates.push(`project_id = $${idx++}`); values.push(body.projectId);
+    }
 
     if (updates.length > 0) {
       values.push(id);

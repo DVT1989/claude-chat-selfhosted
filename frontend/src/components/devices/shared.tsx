@@ -75,7 +75,7 @@ export function ago(iso: string | null | undefined): string {
   return `${Math.round(s / 86400)} dagen geleden`;
 }
 export const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-export const osLabel = (os: string | null) => (os === 'windows' ? 'Windows' : os === 'darwin' ? 'Mac' : os === 'browser' ? 'Browser' : os ?? '?');
+export const osLabel = (os: string | null) => (os === 'windows' ? 'Windows' : os === 'darwin' ? 'Mac' : os === 'browser' ? 'Browser' : os === 'nasbrowser' ? 'Browser (NAS)' : os ?? '?');
 
 export function Badge({ tone, children }: { tone: 'ok' | 'warn' | 'bad' | 'muted'; children: React.ReactNode }) {
   return (
@@ -128,6 +128,7 @@ export const deviceTitle = (d: Device) => d.display_name || d.name;
 function rawAlerts(d: Device, latestAgent: string | null): Array<{ tone: 'warn' | 'bad'; text: string }> {
   const inv = d.inventory;
   const out: Array<{ tone: 'warn' | 'bad'; text: string }> = [];
+  if (d.os === 'nasbrowser') return out;
   if (!d.online && d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() > 86400e3) out.push({ tone: 'warn', text: `Offline sinds ${ago(d.last_seen_at)}` });
   if (!inv) return out;
   const disk = diskUsedPct(inv);
@@ -145,6 +146,8 @@ function rawAlerts(d: Device, latestAgent: string | null): Array<{ tone: 'warn' 
   return out;
 }
 
-export const DeviceIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
+export const DeviceIcon = ({ className = 'w-5 h-5', os }: { className?: string; os?: string | null }) => os === 'nasbrowser' ? (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" /></svg>
+) : (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
 );

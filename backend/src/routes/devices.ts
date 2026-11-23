@@ -7,6 +7,8 @@ import { requireAuth, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { decrypt } from '../services/crypto';
 import * as dev from '../services/devices';
+import { getNas, VIEW_W, VIEW_H } from '../services/nasBrowser';
+import * as pwStore from '../services/nasPasswords';
 import { actBody, claudeAct, claudeScreen, endDeviceSessions } from './remote';
 import { broadcastSse } from '../services/sseEvents';
 import { buildExtensionZip, extensionVersion, EXT_DIR } from '../services/browserExtension';
@@ -335,6 +337,7 @@ async function jobFor(scope: dev.Scope, idOrName: string, job: Omit<dev.Job, 'id
   const d = await dev.getDevice(scope, idOrName);
   if (!d) throw new AppError(404, `Apparaat "${idOrName}" niet gevonden`);
   if (!d.enabled) throw new AppError(409, `${d.name} is uitgeschakeld in de app`);
+  if (d.os === dev.NAS_OS) throw new AppError(409, `${d.name} is de browser op de server: gebruik tabs, read, browser, screen of act (geen exec, file of info)`);
   if (job.type === 'browser' && d.os !== 'browser') throw new AppError(400, `${d.name} is geen browser`);
   if (d.os === 'browser' && job.type !== 'browser') throw new AppError(409, `${d.name} is een browser: gebruik tabs, read, screen, act of browser (geen exec, file of info)`);
   if (!d.online) throw new AppError(409, `${d.name} is offline${d.last_seen_at ? ` (laatst gezien ${new Date(d.last_seen_at).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' })})` : ''}`);
@@ -370,7 +373,7 @@ claude.get('/list', async (_req: Request, res: Response, next: NextFunction) => 
     res.json(list.map((d) => {
       const inv = d.inventory ?? {};
       return {
-        id: d.id, name: d.name, online: d.online, enabled: d.enabled, os: d.os === 'browser' ? 'browser' : d.os_name ?? d.os, lastSeen: d.last_seen_at,
+        id: d.id, name: d.name, online: d.online, enabled: d.enabled, os: d.os === 'browser' || d.os === dev.NAS_OS ? d.os : d.os_name ?? d.os, lastSeen: d.last_seen_at,
         model: inv.model, user: inv.user, rebootPending: inv.rebootPending, inventoryAt: d.inventory_at,
       };
     }));
@@ -384,7 +387,7 @@ claude.get('/:dev/info', async (req: Request, res: Response, next: NextFunction)
     const apps = req.query.apps === '1';
     const inv = { ...(d.inventory ?? {}) } as Record<string, unknown>;
     if (!apps) delete inv.apps;
-    res.json({ id: d.id, name: d.name, online: d.online, enabled: d.enabled, os: d.os === 'browser' ? 'browser' : d.os_name ?? d.os, arch: d.arch,
+    res.json({ id: d.id, name: d.name, online: d.online, enabled: d.enabled, os: d.os === 'browser' || d.os === dev.NAS_OS ? d.os : d.os_name ?? d.os, arch: d.arch,
       agentVersion: d.agent_version, lastSeen: d.last_seen_at, lastIp: d.last_ip, inventoryAt: d.inventory_at, inventory: inv });
   } catch (err) { next(err); }
 });
@@ -427,20 +430,99 @@ async function browserFor(req: Request, res: Response) {
   return d;
 }
 
+// ── Browser (NAS): Chromium on the server, per user (device type 'nasbrowser') ──
+
+/** The user's own NAS browser; null for every other device. Scope is always the user, admin included. */
+async function nasFor(req: Request, res: Response): Promise<{ d: NonNullable<Awaited<ReturnType<typeof dev.getDevice>>>; nas: Awaited<ReturnType<typeof getNas>> } | null> {
+  const userId = res.locals.userId as string;
+  const d = await dev.getDevice(userId, String(req.params.dev));
+  if (!d) throw new AppError(404, 'Apparaat niet gevonden');
+  if (d.os !== dev.NAS_OS) return null;
+  if (!d.enabled) throw new AppError(409, `${d.name} is uitgeschakeld in de app`);
+  try { return { d, nas: await getNas(userId) }; }
+  catch (err) { throw new AppError(502, `${dev.NAS_NAME} starten mislukt: ${String((err as Error).message).split('\n')[0].slice(0, 200)}`); }
+}
+const nasAudit = (res: Response, d: { id: string; name: string }, cmd: string, extra: Record<string, unknown> = {}) =>
+  auditLog(res.locals.userId as string, `device.browser.${cmd}`, 'device', d.id, '', { device: d.name, nas: true, ...extra }).catch(() => undefined);
+
 claude.get('/:dev/tabs', async (req: Request, res: Response, next: NextFunction) => {
-  try { const d = await browserFor(req, res); res.json({ ok: true, ...((await browserJob(res, d, 'tabs', {}, 30)).data ?? {}) }); } catch (err) { next(err); }
+  try {
+    const n = await nasFor(req, res);
+    if (n) { const st = await n.nas.state(); res.json({ ok: true, tabs: st.tabs }); return; }
+    const d = await browserFor(req, res); res.json({ ok: true, ...((await browserJob(res, d, 'tabs', {}, 30)).data ?? {}) });
+  } catch (err) { next(err); }
 });
 
 claude.get('/:dev/read', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const n = await nasFor(req, res);
+    if (n) {
+      const tab = optTab(req.query.tab);
+      if (tab !== undefined) await n.nas.command({ cmd: 'tab-focus', id: tab });
+      const max = Number(req.query.max) || 20000;
+      const r = await n.nas.read();
+      await nasAudit(res, n.d, 'read', { url: r.url.slice(0, 300) });
+      res.json({ ok: true, ...r, text: r.text.slice(0, max), width: VIEW_W, height: VIEW_H });
+      return;
+    }
     const d = await browserFor(req, res);
     const args = { tab: optTab(req.query.tab), max: Number(req.query.max) || undefined, maxElements: Number(req.query.maxElements) || undefined };
     res.json({ ok: true, ...((await browserJob(res, d, 'read', args, 60)).data ?? {}) });
   } catch (err) { next(err); }
 });
 
+// Password manager: Claude sees the accounts of the current site (id and user name, never a password) and can have
+// them filled in. The password goes straight from the database into the page, not through this answer.
+claude.get('/:dev/passwords', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const n = await nasFor(req, res);
+    if (!n) throw new AppError(400, `Wachtwoorden zijn alleen beschikbaar voor de ${dev.NAS_NAME}`);
+    const st = await n.nas.state();
+    const url = st.tabs.find((t) => t.active)?.url ?? '';
+    const o = pwStore.originOf(url);
+    const accounts = o ? await pwStore.accountsFor(res.locals.userId as string, o.origin) : [];
+    const fields = o ? await n.nas.pwFields() : { username: false, password: false };
+    await nasAudit(res, n.d, 'passwords', { host: o?.host ?? null });
+    res.json({ ok: true, url, host: o?.host ?? null, accounts, loginFields: fields,
+      note: 'Wachtwoorden worden nooit getoond. Vul in met POST /passwords/fill {"id"} of {"username"}; klik daarna zelf op Inloggen.' });
+  } catch (err) { next(err); }
+});
+
+const pwFillBody = z.object({ id: z.string().uuid().optional(), username: z.string().max(300).optional() }).refine((v) => v.id || v.username, 'id of username ontbreekt');
+
+claude.post('/:dev/passwords/fill', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const n = await nasFor(req, res);
+    if (!n) throw new AppError(400, `Wachtwoorden zijn alleen beschikbaar voor de ${dev.NAS_NAME}`);
+    const b = pwFillBody.parse(req.body ?? {});
+    const st = await n.nas.state();
+    const o = pwStore.originOf(st.tabs.find((t) => t.active)?.url ?? '');
+    if (!o) throw new AppError(409, 'Open eerst de inlogpagina van de site');
+    const accounts = await pwStore.accountsFor(res.locals.userId as string, o.origin);
+    const acc = b.id ? accounts.find((a) => a.id === b.id) : accounts.find((a) => a.username.toLowerCase() === b.username!.toLowerCase());
+    if (!acc) throw new AppError(404, `Geen opgeslagen account voor ${o.host}${b.username ? ` met naam ${b.username}` : ''}`);
+    const r = await n.nas.pwFill(acc.id).catch((err: Error) => { throw new AppError(409, err.message); });
+    await nasAudit(res, n.d, 'password.fill', { host: o.host, account: acc.id });
+    res.json({ ok: true, host: o.host, ...r });
+  } catch (err) { next(err); }
+});
+
 claude.post('/:dev/browser', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const n = await nasFor(req, res);
+    if (n) {
+      const { cmd, ...a } = browserNavBody.parse(req.body);
+      if ((cmd === 'open' || cmd === 'navigate') && !a.url) throw new AppError(400, 'url ontbreekt');
+      if (a.tab !== undefined && cmd !== 'open') await n.nas.command({ cmd: 'tab-focus', id: a.tab });
+      if (cmd === 'open') await n.nas.command({ cmd: 'tab-new', url: a.url });
+      else if (cmd === 'navigate') await n.nas.command({ cmd: 'navigate', url: a.url! });
+      else if (cmd === 'history') await n.nas.command({ cmd: a.dir === 'forward' ? 'forward' : a.dir === 'reload' ? 'reload' : 'back' });
+      else if (cmd === 'close') { const t = a.tab ?? (await n.nas.state()).tabs.find((x) => x.active)?.id; if (t !== undefined) await n.nas.command({ cmd: 'tab-close', id: t }); }
+      await nasAudit(res, n.d, cmd, a.url ? { url: a.url.slice(0, 300) } : {});
+      const st = await n.nas.state();
+      res.json({ ok: true, tabs: st.tabs });
+      return;
+    }
     const d = await browserFor(req, res);
     const { cmd, ...args } = browserNavBody.parse(req.body);
     if ((cmd === 'open' || cmd === 'navigate') && !args.url) throw new AppError(400, 'url ontbreekt');
@@ -453,6 +535,12 @@ claude.get('/:dev/screen', async (req: Request, res: Response, next: NextFunctio
   try {
     const d = await dev.getDevice(res.locals.scope as dev.Scope, String(req.params.dev));
     if (!d) throw new AppError(404, 'Apparaat niet gevonden');
+    if (d.os === dev.NAS_OS) {
+      await nasFor(req, res);
+      const shot = await claudeScreen(d, res.locals.userId as string);
+      res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'X-Screen-Width': String(shot.w), 'X-Screen-Height': String(shot.h) }).send(shot.jpeg);
+      return;
+    }
     if (d.os === 'browser') {
       const r = await browserJob(res, d, 'screenshot', { tab: optTab(req.query.tab) }, 60);
       const dd = (r.data ?? {}) as { width?: number; height?: number; tab?: number };
@@ -469,6 +557,12 @@ claude.post('/:dev/act', async (req: Request, res: Response, next: NextFunction)
   try {
     const d = await dev.getDevice(res.locals.scope as dev.Scope, String(req.params.dev));
     if (!d) throw new AppError(404, 'Apparaat niet gevonden');
+    if (d.os === dev.NAS_OS) {
+      await nasFor(req, res);
+      const b = actBody.parse(req.body);
+      res.json({ ok: true, ...(await claudeAct(d, res.locals.userId as string, b.actions)) });
+      return;
+    }
     if (d.os === 'browser') {
       const b = browserActBody.parse(req.body);
       const r = await browserJob(res, d, 'act', { tab: b.tab ?? optTab(req.query.tab), actions: b.actions }, 120);
@@ -534,6 +628,26 @@ claude.post('/:dev/refresh', async (req: Request, res: Response, next: NextFunct
 const app = Router();
 app.use(requireAuth);
 devicesRouter.use('/', app);
+
+// Password manager (Browser NAS): list, reveal on click and delete. Own accounts only, also for admins.
+app.get('/nas-passwords', async (req: Request, res: Response, next: NextFunction) => {
+  try { res.json({ passwords: await pwStore.listAll(req.user!.userId) }); } catch (err) { next(err); }
+});
+app.post('/nas-passwords/:id/reveal', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const sec = await pwStore.secret(req.user!.userId, String(req.params.id));
+    if (!sec) throw new AppError(404, 'Account niet gevonden');
+    await auditLog(req.user!.userId, 'device.browser.password.reveal', 'nas_password', String(req.params.id), ipOf(req), {});
+    res.set('Cache-Control', 'no-store').json({ password: sec.password });
+  } catch (err) { next(err); }
+});
+app.delete('/nas-passwords/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!(await pwStore.remove(req.user!.userId, String(req.params.id)))) throw new AppError(404, 'Account niet gevonden');
+    await auditLog(req.user!.userId, 'device.browser.password.delete', 'nas_password', String(req.params.id), ipOf(req), {});
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
 
 app.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -1035,6 +1149,7 @@ app.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const d = await dev.getDevice(scopeOf(req), String(req.params.id));
     if (!d) throw new AppError(404, 'Apparaat niet gevonden');
+    if (d.os === dev.NAS_OS) throw new AppError(409, `${d.name} hoort bij de app en kan niet worden verwijderd`);
     await query('DELETE FROM devices WHERE id = $1', [d.id]);
     await auditLog(req.user!.userId, 'device.remove', 'device', d.id, ipOf(req), { name: d.name });
     res.json({ ok: true });

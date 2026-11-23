@@ -12,7 +12,7 @@ interface TestResult {
   message: string;
 }
 
-type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack';
+type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack' | 'google-search-console';
 
 /** GitHub token: who is it, and may it run Actions (checked on the first repo it can see). */
 async function testGithub(credentials: Record<string, unknown>): Promise<TestResult> {
@@ -66,6 +66,8 @@ export async function testConnector(
         return await testGithub(credentials);
       case 'focustrack':
         return await testFocustrack(config, credentials);
+      case 'google-search-console':
+        return await (await import('./googleSearchConsole')).testGsc(credentials);
       case 'ssh':
         return await testSsh(config, credentials);
       case 'sftp':
@@ -124,50 +126,37 @@ async function testSsh(config: Record<string, unknown>, credentials: Record<stri
   if (!user) return { ok: false, message: 'Gebruikersnaam vereist' };
   if (!password) return { ok: false, message: 'Wachtwoord vereist' };
 
+  // Password via SSHPASS env (sshpass -e), sudo password via stdin: neither shows up in a process list or error text
+  const sshArgs = ['-e', 'ssh',
+    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+    '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
+    '-p', String(port), `${user}@${host}`];
+  const env = { ...process.env, SSHPASS: password };
+  const clean = (m: string) => m.split('\n').filter(l => !l.startsWith('Command failed')).join(' ').trim().slice(0, 300);
   try {
-    await execFileAsync('sshpass', [
-      '-p', password,
-      'ssh',
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'ConnectTimeout=5',
-      '-o', 'PreferredAuthentications=password',
-      '-o', 'PubkeyAuthentication=no',
-      '-p', String(port),
-      `${user}@${host}`,
-      'echo ok',
-    ], { timeout: 10_000 });
-    // Optional: also test sudo if sudo_password configured
+    await execFileAsync('sshpass', [...sshArgs, 'echo ok'], { timeout: 10_000, env });
     const sudoPass = credentials.sudo_password as string | undefined;
     if (sudoPass) {
       try {
-        const remoteCmd = `echo '${sudoPass.replace(/'/g, "'\\''")}' | sudo -S -p '' -k whoami 2>/dev/null`;
-        const { stdout } = await execFileAsync('sshpass', [
-          '-p', password,
-          'ssh',
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ConnectTimeout=5',
-          '-o', 'PreferredAuthentications=password',
-          '-o', 'PubkeyAuthentication=no',
-          '-p', String(port),
-          `${user}@${host}`,
-          remoteCmd,
-        ], { timeout: 10_000 });
-        if (stdout.trim() === 'root') {
-          return { ok: true, message: `SSH + sudo werkend (${host}:${port}, sudo OK)` };
-        }
-        return { ok: false, message: `SSH werkt maar sudo wachtwoord onjuist — kreeg "${stdout.trim()}" ipv "root"` };
+        const run = execFileAsync('sshpass', [...sshArgs,
+          "S=$(command -v sudo || ls /usr/bin/sudo /bin/sudo /usr/local/bin/sudo 2>/dev/null | head -1); [ -n \"$S\" ] || { echo NOSUDO; exit 0; }; $S -S -p '' -k whoami 2>/dev/null"],
+          { timeout: 10_000, env });
+        run.child.stdin?.end(sudoPass + '\n');
+        const out = (await run).stdout.trim();
+        if (out === 'root') return { ok: true, message: `SSH + sudo werkend (${host}:${port}, sudo OK)` };
+        if (out === 'NOSUDO') return { ok: false, message: 'SSH werkt, maar sudo is niet geïnstalleerd op de server' };
+        return { ok: false, message: `SSH werkt maar sudo wachtwoord onjuist of geen sudo-rechten voor ${user}` };
       } catch (err) {
-        return { ok: false, message: `SSH werkt maar sudo test faalde: ${(err as Error).message.split('\n')[0]}` };
+        return { ok: false, message: `SSH werkt maar sudo test faalde: ${clean((err as Error).message)}` };
       }
     }
-
     return { ok: true, message: `SSH verbinding met ${host}:${port} succesvol` };
   } catch (err) {
     const msg = (err as Error).message ?? '';
     if (msg.includes('Permission denied') || msg.includes('Authentication failed')) {
       return { ok: false, message: `SSH authenticatie mislukt — controleer gebruikersnaam/wachtwoord` };
     }
-    return { ok: false, message: `SSH verbinding mislukt: ${msg}` };
+    return { ok: false, message: `SSH verbinding mislukt: ${clean(msg)}` };
   }
 }
 

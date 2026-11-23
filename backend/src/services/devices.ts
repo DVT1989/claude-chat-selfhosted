@@ -7,6 +7,7 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import type { Response } from 'express';
 import { query } from '../db';
+import { NAS_NAME } from './browserSkill';
 import { redis } from '../redis';
 
 export const ONLINE_MS = 75_000;          // a poll at least every ~50s keeps a device online
@@ -253,8 +254,29 @@ export interface DeviceRow {
   notes_count?: number; favorite?: boolean;
 }
 
-export const isOnline = (d: { last_seen_at: string | null; enabled: boolean }) =>
-  d.enabled && !!d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < ONLINE_MS;
+/** The virtual "Browser (NAS)" device: runs on the server, so it is always available. */
+export const NAS_OS = 'nasbrowser';
+export { NAS_NAME };
+
+export const isOnline = (d: { last_seen_at: string | null; enabled: boolean; os?: string | null }) =>
+  d.enabled && (d.os === NAS_OS || (!!d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < ONLINE_MS));
+
+const nasEnsured = new Set<string>();
+/** One virtual browser device per user, created on first listing. The token is random and never handed out. */
+export async function ensureNasBrowser(userId: string): Promise<void> {
+  if (nasEnsured.has(userId)) return;
+  const have = await query('SELECT 1 FROM devices WHERE user_id = $1::uuid AND os = $2 LIMIT 1', [userId, NAS_OS]);
+  if (have.rows.length) {
+    // HOST_LABEL changed: keep the stored name in line with the prompts (lookups by name)
+    await query(`UPDATE devices SET name = $3 WHERE user_id = $1::uuid AND os = $2 AND name <> $3 AND name LIKE 'Browser (%)'`, [userId, NAS_OS, NAS_NAME]);
+  } else {
+    await query(
+      `INSERT INTO devices (user_id, name, hostname, os, os_name, arch, agent_version, token_hash, enabled, last_seen_at)
+       VALUES ($1::uuid, $2, 'nas-browser', $3, 'Chromium op de server', 'x64', NULL, $4, TRUE, now())`,
+      [userId, NAS_NAME, NAS_OS, sha256(randomBytes(32).toString('hex'))]);
+  }
+  nasEnsured.add(userId);
+}
 
 /** Scope: a user id (own devices) or null (admin: every device). */
 export type Scope = string | null;
@@ -267,6 +289,7 @@ export function requestScope(req: { user?: { userId: string; role: string }; hea
 }
 
 export async function listDevices(scope: Scope, viewer: string | null = null): Promise<Array<DeviceRow & { online: boolean }>> {
+  if (scope) await ensureNasBrowser(scope).catch(() => undefined);
   const r = await query<DeviceRow>(
     `SELECT d.id, d.name, d.hostname, d.os, d.os_name, d.arch, d.agent_version, d.enabled, d.inventory, d.inventory_at,
             d.last_seen_at, d.last_ip, d.created_at, u.name AS owner, d.display_name, d.org, d.location, d.assigned_user, d.role,

@@ -7,11 +7,11 @@ interface Enroll { code: string; expiresAt: string }
 interface ListResponse { devices: Device[]; settings: { requireTotp: boolean }; totpEnabled: boolean }
 
 /** Koppelingen: tegel 'Browser (Chrome)': extensie downloaden, installeren en koppelen met een koppelcode. */
-export default function BrowserConnectorCard() {
+export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged }: { mode?: 'full' | 'add' | 'manage'; onlyId?: string; onChanged?: () => void } = {}) {
   const [data, setData] = useState<ListResponse | null>(null);
   const [enroll, setEnroll] = useState<Enroll | null>(null);
   const [totp, setTotp] = useState('');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(mode === 'add');
   const [err, setErr] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -22,7 +22,7 @@ export default function BrowserConnectorCard() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const browsers = (data?.devices ?? []).filter((d) => d.os === 'browser');
+  const browsers = (data?.devices ?? []).filter((d) => d.os === 'browser' && (!onlyId || d.id === onlyId));
   const needTotp = !!data?.totpEnabled && !!data?.settings.requireTotp;
 
   // While a code is open: close it as soon as a new browser shows up
@@ -31,7 +31,7 @@ export default function BrowserConnectorCard() {
     const known = new Set(browsers.map((b) => b.id));
     const t = setInterval(async () => {
       const r = await load();
-      if (r?.devices.some((d) => d.os === 'browser' && !known.has(d.id))) setEnroll(null);
+      if (r?.devices.some((d) => d.os === 'browser' && !known.has(d.id))) { setEnroll(null); onChanged?.(); }
     }, 4000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -47,29 +47,29 @@ export default function BrowserConnectorCard() {
     const name = editName.trim();
     if (!name) { setEditId(null); return; }
     setErr('');
-    try { await api(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }); setEditId(null); await load(); }
+    try { await api(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }); setEditId(null); await load(); onChanged?.(); }
     catch (e) { setErr((e as Error).message); }
   }
   async function remove(id: string) {
     setErr('');
-    try { await api(`/${id}`, { method: 'DELETE' }); setDelId(null); await load(); }
+    try { await api(`/${id}`, { method: 'DELETE' }); setDelId(null); await load(); onChanged?.(); }
     catch (e) { setErr((e as Error).message); }
   }
 
   return (
-    <section className="mb-6 rounded-card border border-(--border) bg-(--input) p-4 space-y-3">
-      <div className="flex items-start gap-3">
-        <svg className="w-5 h-5 mt-0.5 text-(--accent) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <section className={mode === 'full' ? 'mb-6 rounded-card border border-(--border) bg-(--input) p-4 space-y-3' : 'space-y-3'}>
+      {mode !== 'manage' && <div className="flex items-start gap-3">
+        {mode === 'full' && <svg className="w-5 h-5 mt-0.5 text-(--accent) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z" />
-        </svg>
+        </svg>}
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-(--text)">Browser (Chrome)</div>
+          {mode === 'full' && <div className="text-sm font-medium text-(--text)">Browser (Chrome)</div>}
           <p className="text-xs text-(--muted)">Claude kan in jouw Chrome tabbladen lezen, navigeren, klikken, typen en een screenshot maken. Alleen na koppeling; interne pagina&apos;s (chrome://) worden nooit bediend.</p>
         </div>
-        <button className={open ? ghost : primary} onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'Sluiten' : 'Browser toevoegen'}</button>
-      </div>
+        {mode === 'full' && <button className={open ? ghost : primary} onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'Sluiten' : 'Browser toevoegen'}</button>}
+      </div>}
 
-      {browsers.length > 0 && (
+      {mode !== 'add' && browsers.length > 0 && (
         <ul className="space-y-1.5">
           {browsers.map((b) => (
             <li key={b.id} className="flex flex-wrap items-center gap-2 text-xs text-(--muted)">

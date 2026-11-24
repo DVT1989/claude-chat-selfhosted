@@ -26,6 +26,7 @@ import { remoteRouter } from './routes/remote';
 import { lessonsRouter } from './routes/lessons';
 import { federationRouter } from './routes/federation';
 import { ensureFederationSchema, startFederationScheduler } from './services/federation';
+import { ensureConsultSchema, startConsultScheduler } from './services/federationChat';
 import { agentsRouter } from './routes/agents';
 import { memoryRouter } from './routes/memory';
 import { ensureMemorySchema } from './services/memory';
@@ -320,6 +321,7 @@ async function start() {
     await ensureDelegationsSchema();
     await ensureInsightsSchema();
     await ensureFederationSchema();
+    await ensureConsultSchema();
     console.log('✓ Migrations applied');
     // Claude runs as a child of this process, so any stream still flagged at boot died with the previous process.
     const orphaned = await pool.query<{ conversation_id: string; id: string; created_at: Date }>(
@@ -371,6 +373,7 @@ async function start() {
   startScheduler();
   startTaskScheduler();
   startFederationScheduler();
+  startConsultScheduler();
   startDelegations();
   void resumeQueues();
   // the conversation that started a selfupdate continues by itself and checks the rollout (no "typ verder")

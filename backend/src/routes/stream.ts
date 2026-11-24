@@ -1055,7 +1055,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
       ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack' || c.type === 'google-search-console' || c.type === 'ninjaone'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
           language, first ? attachmentInfos : [], effectiveModel, { privileged: true, conversationId: conv.id, werkplek: !!(conv.metadata as { delegation_id?: string }).delegation_id })
       : await runTask(userId, message, sid, onEv, abort.signal, connectors, undefined,
-          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project });
+          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project, readOnly: !!(conv.metadata as { federation_consult?: string }).federation_consult });
     return result.sessionId;
   };
   /** Remove the limit notice of the interrupted attempt from the answer being built. */
@@ -1236,6 +1236,12 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   void import('../services/tasks').then((t) => t.onRunFinished({
     convId: conv.id, userId, assistantMsgId, userMessage, failed: runFailed, limitHit, aborted: abort.signal.aborted, error: runFailed ? errorMessage : '',
   })).catch((e) => console.error('[tasks] finish hook failed:', e));
+  // The fixed "Overleg" conversation of a linked installation: the answer goes back to the asker (services/federationChat.ts). Never throws.
+  if ((conv.metadata as { federation_consult?: string }).federation_consult) {
+    void import('../services/federationChat').then((m) => m.onConsultRunFinished({
+      convId: conv.id, assistantMsgId, userMessage, failed: runFailed, limitHit, aborted: abort.signal.aborted, error: runFailed ? errorMessage : '',
+    })).catch((e) => console.error('[federation-chat] finish hook failed:', e));
+  }
   // The workplace of a delegation: status, summary, push and the card in the parent. Never throws.
   if ((conv.metadata as { delegation_id?: string }).delegation_id) {
     void import('../services/delegations').then((m) => m.onRunFinished({

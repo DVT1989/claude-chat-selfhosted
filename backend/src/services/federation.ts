@@ -20,11 +20,12 @@ import { uniqueSlug } from './agents';
 import { listOwnSkills, installSkillDir, isValidSkillName } from './userSkills';
 import { computeNext } from './tasks';
 import { getUserWorkspace, ensureProjectDir } from './claudeCode';
+import { filesKind, profileKind } from './federationFiles';
 
-export const KINDS = ['projects', 'agents', 'skills', 'memories', 'lessons', 'tasks', 'conversations'] as const;
+export const KINDS = ['projects', 'agents', 'skills', 'memories', 'lessons', 'tasks', 'conversations', 'files', 'profile'] as const;
 export type KindName = typeof KINDS[number];
 export const KIND_LABEL: Record<KindName, string> = {
-  projects: 'Projecten', agents: 'Agents', skills: 'Skills', memories: 'Geheugen', lessons: 'Lessen', tasks: 'Taken', conversations: 'Gesprekken',
+  projects: 'Projecten', agents: 'Agents', skills: 'Skills', memories: 'Geheugen', lessons: 'Lessen', tasks: 'Taken', conversations: 'Gesprekken', files: 'Bestanden', profile: 'Profiel',
 };
 export const FEDERATION_VERSION = 1;
 const NIL = '00000000-0000-0000-0000-000000000000';
@@ -168,7 +169,9 @@ export interface ApplyCtx {
   attachment: (a: { rid: string; name: string }) => Promise<Buffer | null>;
 }
 
-interface Kind {
+export interface Kind {
+  /** only for users that exist here (matched on e-mail): items of unknown owners are skipped instead of going to the fallback admin */
+  ownerOnly?: boolean;
   list(after: [string, string] | null, limit: number, owner?: string): Promise<RawItem[]>;
   one(localId: string): Promise<RawItem | null>;
   count(): Promise<{ count: number; latest: string | null }>;
@@ -219,7 +222,7 @@ function dbKind(def: DbDef, impl: Pick<Kind, 'create' | 'update' | 'find' | 'nat
   };
 }
 
-const kinds: Record<Exclude<KindName, 'skills'>, Kind> = {
+const kinds: Record<Exclude<KindName, 'skills' | 'files' | 'profile'>, Kind> = {
   projects: dbKind({
     table: 'projects', from: 'projects p LEFT JOIN users u ON u.id = p.user_id', id: 'p.id', ts: 'p.updated_at', ownerCol: 'user_id',
     fields: 'p.name, p.color, p.icon, p.instructions',
@@ -486,7 +489,7 @@ function writeSkill(owner: string, d: Data): void {
 
 export const kindOf = (k: string): Kind => {
   if (!(KINDS as readonly string[]).includes(k)) throw new AppError(400, `Onbekende soort: ${k}`);
-  return k === 'skills' ? skills : kinds[k as Exclude<KindName, 'skills'>];
+  return k === 'skills' ? skills : k === 'files' ? filesKind : k === 'profile' ? profileKind : kinds[k as Exclude<KindName, 'skills' | 'files' | 'profile'>];
 };
 
 // ── export ────────────────────────────────────────────────────
@@ -515,7 +518,7 @@ async function withOrigin(kind: string, items: RawItem[], requester: string | nu
 
 export async function exportPage(kind: string, after: [string, string] | null, limit: number, requester: string | null, owner?: string): Promise<{ items: Item[]; next: string | null }> {
   const k = kindOf(kind);
-  const n = Math.min(Math.max(limit || 20, 1), kind === 'conversations' ? 10 : 100);
+  const n = Math.min(Math.max(limit || 20, 1), kind === 'conversations' ? 10 : kind === 'files' ? 8 : 100);
   const raw = await k.list(after, n, owner);
   const items = await withOrigin(kind, raw, requester);
   return { items, next: raw.length ? mkCursor(raw[raw.length - 1]) : null };
@@ -596,6 +599,7 @@ export async function applyIncoming(o: IncomingOpts): Promise<{ result: ApplyRes
     if (hashData(item.data) !== item.hash) return { result: 'error', local_id: null, error: 'Hash klopt niet' };
     const me = await selfInfo();
     const owner = await resolveOwner(item.owner_email, o.fallbackAdmin);
+    if (k.ownerOnly && owner.fallback) return { result: 'unchanged', local_id: null };
     const ctx: ApplyCtx = {
       installId: o.install.id, installName: o.install.name, label: owner.fallback ? o.install.name : null, ts: item.ts,
       attachment: async (a) => (o.fetchAttachment ? o.fetchAttachment(a.rid) : stagedAttachment(o.install.id, a.rid)),
@@ -730,7 +734,7 @@ async function peerRequest(p: Peer, path: string, init: { method?: string; body?
   }
   return res;
 }
-async function peerJson<T>(p: Peer, path: string, init?: Parameters<typeof peerRequest>[2]): Promise<T> { return (await peerRequest(p, path, init)).json() as Promise<T>; }
+export async function peerJson<T>(p: Peer, path: string, init?: Parameters<typeof peerRequest>[2]): Promise<T> { return (await peerRequest(p, path, init)).json() as Promise<T>; }
 async function peerBuffer(p: Peer, path: string): Promise<Buffer | null> {
   try { return Buffer.from(await (await peerRequest(p, path)).arrayBuffer()); } catch { return null; }
 }
@@ -807,7 +811,7 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
       const scope = opts.owner ?? (kind === 'lessons' ? undefined : creatorEmail);
       let after = opts.owner ? null : parseCursor(cursors[kind]);
       for (let page = 0; page < 500; page++) {
-        const qs = `?limit=${kind === 'conversations' ? 10 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}${scope ? `&owner=${encodeURIComponent(scope)}` : ''}`;
+        const qs = `?limit=${kind === 'conversations' ? 10 : kind === 'files' ? 8 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}${scope ? `&owner=${encodeURIComponent(scope)}` : ''}`;
         const data = await peerJson<{ items: Item[]; next: string | null }>(p, `/export/${kind}${qs}`);
         let stop = false;
         for (const item of data.items) {
@@ -842,7 +846,8 @@ async function pushKind(p: Peer, me: { id: string; name: string }, kind: string,
   const k = kindOf(kind);
   let after = oneOff ? null : parseCursor(cursors[kind]);
   for (let page = 0; page < 500; page++) {
-    const raw = await k.list(after, kind === 'conversations' ? 5 : 40, owner);
+    const pageN = kind === 'conversations' ? 5 : kind === 'files' ? 6 : 40;
+    const raw = await k.list(after, pageN, owner);
     if (!raw.length) break;
     const rows = (await query<{ local_id: string; install_id: string; local_hash: string; pushed: boolean }>(
       'SELECT local_id, install_id, local_hash, pushed FROM federation_origin WHERE kind = $1 AND local_id = ANY($2::text[])', [kind, raw.map((i) => i.id)])).rows;
@@ -876,7 +881,7 @@ async function pushKind(p: Peer, me: { id: string; name: string }, kind: string,
     }
     after = parseCursor(mkCursor(raw[raw.length - 1]));
     if (!oneOff) cursors[kind] = mkCursor(raw[raw.length - 1]);
-    if (raw.length < (kind === 'conversations' ? 5 : 40)) break;
+    if (raw.length < pageN) break;
   }
 }
 
@@ -890,7 +895,7 @@ export async function importOnDemand(idOrName: string, kind: string, match: stri
   const out: Array<{ name: string; result: ApplyResult; error?: string }> = [];
   let after: [string, string] | null = null;
   for (let page = 0; page < 500; page++) {
-    const data: { items: Item[]; next: string | null } = await peerJson(p, `/export/${kind}?limit=${kind === 'conversations' ? 10 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}`);
+    const data: { items: Item[]; next: string | null } = await peerJson(p, `/export/${kind}?limit=${kind === 'conversations' ? 10 : kind === 'files' ? 8 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}`);
     for (const item of data.items) {
       const name = k.name(item.data);
       if (!name.toLowerCase().includes(needle)) continue;

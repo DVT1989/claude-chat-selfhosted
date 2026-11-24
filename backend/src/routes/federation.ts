@@ -8,6 +8,7 @@ import { requireAuth, requireAdmin, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { userForMemoryToken } from '../services/memory';
 import * as fed from '../services/federation';
+import * as chat from '../services/federationChat';
 
 export const federationRouter = Router();
 federationRouter.use(rateLimit({ windowMs: 60_000, limit: 1200, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests' } }));
@@ -66,6 +67,18 @@ federationRouter.put('/attachments/:rid', keyAuth, writeOnly, express.raw({ type
     fed.stageAttachment(inst, String(req.params.rid), req.body);
     res.json({ ok: true });
   } catch (e) { next(e); }
+});
+
+// consultation between admin chats (services/federationChat.ts): needs a two-way key, the other side answers read-only
+federationRouter.post('/consult/ask', keyAuth, writeOnly, express.json({ limit: '200kb' }), async (req, res, next) => {
+  try {
+    const b = z.object({ question: z.string().min(1).max(20000), topic: z.string().min(1).max(64), round: z.number().int().optional(), reason: z.string().max(200).nullable().optional(), from: z.string().max(100).optional() }).parse(req.body);
+    const r = await chat.receiveAsk((req as FReq).fedKey!, (req as FReq).fedInstall, b);
+    res.status(202).json(r);
+  } catch (e) { next(e); }
+});
+federationRouter.get('/consult/:id', keyAuth, writeOnly, async (req, res, next) => {
+  try { res.json(await chat.consultStatus(String(req.params.id))); } catch (e) { next(e); }
 });
 
 const importSchema = z.object({
@@ -171,6 +184,16 @@ admin.post('/peers/:id/import', async (req, res, next) => {
     res.json({ results: await fed.importOnDemand(p.id, b.kind, b.match) });
   } catch (e) { next(e); }
 });
+
+admin.post('/peers/:id/ask', async (req, res, next) => {
+  try {
+    const b = z.object({ question: z.string().min(1).max(20000), conversationId: z.string().uuid(), reason: z.string().max(200).optional() }).parse(req.body);
+    const out = await chat.ask(req.user!.userId, String(req.params.id), b);
+    await auditLog(req.user!.userId, 'federation.consult.ask', 'federation_peer', String(req.params.id), req.ip ?? '', { round: out.round });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+admin.get('/consults', async (_req, res, next) => { try { res.json({ consults: await chat.listConsults() }); } catch (e) { next(e); } });
 
 admin.get('/conflicts', async (req, res, next) => {
   try { res.json({ conflicts: await fed.listConflicts(req.query.status === 'resolved' ? 'resolved' : 'open') }); } catch (e) { next(e); }

@@ -10,6 +10,7 @@ const API = '/api/federation/admin';
 const KINDS: Array<[string, string]> = [
   ['agents', 'Agents'], ['skills', 'Skills'], ['memories', 'Eigen geheugen'], ['lessons', 'Gedeelde lessen'],
   ['tasks', 'Taken'], ['projects', 'Projecten'], ['conversations', 'Gesprekken'],
+  ['files', 'Bestanden'], ['profile', 'Profiel (naam, avatar)'],
 ];
 
 type Peer = {
@@ -167,7 +168,7 @@ export default function InstallatiesPage() {
                 <label className="flex items-center gap-1.5 text-sm text-[var(--muted)] cursor-pointer">
                   <input type="checkbox" checked={p.all_users} onChange={(e) => {
                     const on = e.target.checked;
-                    if (on && !confirm(`Ook agents, skills, geheugen, taken, projecten en gesprekken van andere gebruikers synchroniseren met ${p.name}?`)) return;
+                    if (on && !confirm(`Ook agents, skills, geheugen, taken, projecten, gesprekken, bestanden en profielen van andere gebruikers synchroniseren met ${p.name}?`)) return;
                     void run(p.id, () => api(`/peers/${p.id}`, 'PATCH', { allUsers: on }), on ? 'Alle gebruikers gaan mee' : 'Alleen jouw items gaan mee');
                   }} />
                   Ook andere gebruikers
@@ -245,6 +246,10 @@ export default function InstallatiesPage() {
 function preview(v: unknown): string {
   if (v == null) return '(niet meer aanwezig)';
   const o = { ...(v as Record<string, unknown>) };
+  if (typeof o.b64 === 'string') {
+    try { const bin = atob(o.b64); const txt = decodeURIComponent(escape(bin)); return `${o.root}/${o.path} (${bin.length} bytes)\n\n${txt.slice(0, 1800)}`; } catch { return `${o.root}/${o.path}`; }
+  }
+  if ('avatar' in o) return `Naam: ${String(o.name ?? '')}\nAvatar: ${typeof o.avatar === 'string' ? `afbeelding (${Math.round(o.avatar.length / 1024)} KB)` : 'geen'}`;
   if (Array.isArray(o.messages)) o.messages = `${o.messages.length} berichten`;
   if (o.files && typeof o.files === 'object') o.files = Object.keys(o.files as object);
   return JSON.stringify(o, null, 1).slice(0, 2000);

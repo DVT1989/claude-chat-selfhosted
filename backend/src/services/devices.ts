@@ -178,7 +178,7 @@ export async function saveSettings(userId: string, requireTotp: boolean): Promis
 
 // ── Jobs: handed out on poll, answered on result ─────────────
 
-export interface Job { id: string; type: 'exec' | 'read' | 'write' | 'inventory' | 'update' | 'remote' | 'sas' | 'browser'; cmd?: string; args?: Record<string, unknown>; command?: string; shell?: string; timeoutSec?: number; runas?: 'system' | 'user'; elevated?: boolean; path?: string; dataB64?: string; session?: string; key?: string }
+export interface Job { id: string; xfer?: string; overwrite?: boolean; type: 'exec' | 'read' | 'write' | 'upload' | 'download' | 'inventory' | 'update' | 'remote' | 'sas' | 'browser'; cmd?: string; args?: Record<string, unknown>; command?: string; shell?: string; timeoutSec?: number; runas?: 'system' | 'user'; elevated?: boolean; path?: string; dataB64?: string; session?: string; key?: string }
 export interface JobResult { id: string; ok: boolean; exitCode?: number; output?: string; error?: string; dataB64?: string; data?: unknown; durationMs?: number }
 
 const queued = new Map<string, Job[]>();                       // deviceId -> jobs not yet handed out
@@ -320,12 +320,15 @@ export async function getDevice(scope: Scope, idOrName: string, viewer: string |
 const tokenKey = (t: string) => `devices:claude:${t}`;
 
 /** Claude only ever sees the devices of the user themselves, admin included. */
-export async function issueClaudeToken(userId: string): Promise<{ token: string; devices: Array<{ id: string; name: string; os: string | null; online: boolean }> } | null> {
+/** Which client is behind a browser device: the Chrome extension or the AIO Dashboard app (both os 'browser'). */
+export const browserKind = (osName: string | null | undefined): 'aio' | 'chrome' => (/^AIO/i.test(osName ?? '') ? 'aio' : 'chrome');
+
+export async function issueClaudeToken(userId: string): Promise<{ token: string; devices: Array<{ id: string; name: string; os: string | null; online: boolean; kind?: string }> } | null> {
   const devices = (await listDevices(userId)).filter((d) => d.enabled);
   if (!devices.length) return null;
   const token = randomBytes(24).toString('base64url');
   await redis.set(tokenKey(token), JSON.stringify({ userId }), 'EX', CLAUDE_TOKEN_TTL_SEC);
-  return { token, devices: devices.map((d) => ({ id: d.id, name: d.name, os: d.os, online: d.online })) };
+  return { token, devices: devices.map((d) => ({ id: d.id, name: d.name, os: d.os, online: d.online, ...(d.os === 'browser' ? { kind: browserKind(d.os_name) } : {}) })) };
 }
 
 export async function userForClaudeToken(token: string): Promise<{ userId: string; scope: Scope } | null> {

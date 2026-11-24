@@ -8,10 +8,8 @@ import { NavIcons, navColor } from '@/components/navItems';
 
 const TOOLS = [
   { href: '/settings/adminprompt', title: 'Admin-chat', text: 'Laat Claude de app en de containers op de server aanpassen.', icon: NavIcons.terminal },
-  { href: '/settings/admin', title: 'Gebruikers', text: 'Accounts aanmaken, rollen wijzigen, sessies bekijken.', icon: NavIcons.users },
-  { href: '/settings/groepen', title: 'Groepen', text: 'Gebruikers in groepen zetten, bijvoorbeeld om agents te delen.', icon: NavIcons.users },
+  { href: '/settings/admin', title: 'Gebruikers', text: 'Accounts aanmaken, rollen wijzigen, sessies bekijken en groepen beheren.', icon: NavIcons.users },
   { href: '/settings/backups', title: 'Backups', text: 'Dagelijkse back-ups bekijken, maken, downloaden of terugzetten.', icon: NavIcons.backups },
-  { href: '/settings/installaties', title: 'Installaties', text: 'Andere claude-chat koppelen en agents, skills, geheugen en gesprekken synchroniseren.', icon: NavIcons.federation },
 ];
 
 /** Phones: the admin sections behind the "Admin tools" tab (on desktop they are in the rail). */

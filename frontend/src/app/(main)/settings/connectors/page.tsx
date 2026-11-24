@@ -4,7 +4,8 @@ import { useState, useEffect, FormEvent, Suspense } from 'react';
 import EmptyState from '@/components/ui/EmptyState';
 import { NavIcons } from '@/components/navItems';
 import { useTranslations } from '@/lib/i18n';
-import { connectors as connApi } from '@/lib/api';
+import { connectors as connApi, agentsApi, type AgentDef } from '@/lib/api';
+import { AgentAvatar } from '@/components/chat/AgentBubble';
 import type { Connector } from '@/types';
 import BrowserConnectorCard from '@/components/devices/BrowserConnectorCard';
 import GoogleSearchConsoleCard, { GoogleLogo } from '@/components/GoogleSearchConsoleCard';
@@ -18,16 +19,27 @@ const CONNECTOR_TYPES = [
   { value: 'ftp',    label: 'FTP',       fields: [{ key: 'host', label: 'Host', type: 'text' }],                                                                          credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }] },
   { value: 'smb',    label: 'SMB/Samba', fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'share', label: 'Share naam', type: 'text' }],                     credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }] },
   { value: 'focustrack', label: 'FocusTrack', fields: [{ key: 'url', label: 'Serveradres, bijv. https://focustrack.example.com', type: 'text' }],                         credFields: [{ key: 'key', label: 'Koppelingssleutel (AIO-site › API-sleutels › soort Koppeling)', type: 'password' }] },
+  { value: 'ninjaone', label: 'NinjaOne', agents: true, fields: [
+      { key: 'region', label: 'Regio / instance', type: 'select', options: [['eu', 'EU (eu.ninjarmm.com)'], ['app', 'Global (app.ninjarmm.com)'], ['ca', 'Canada (ca.ninjarmm.com)'], ['oc', 'Oceanië (oc.ninjarmm.com)'], ['us2', 'US2 (us2.ninjarmm.com)'], ['custom', 'Eigen URL']] },
+      { key: 'url', label: 'Eigen URL, bijv. https://tenant.rmmservice.eu', type: 'text', onlyRegion: 'custom' }],
+    credFields: [{ key: 'client_id', label: 'Client ID (NinjaOne › Beheer › Apps › API › Client app-ID)', type: 'text' }, { key: 'client_secret', label: 'Client Secret', type: 'password' }] },
   { value: 'python', label: 'Python',    fields: [],                                                                                                                       credFields: [] },
   // eigen flow (inloggen of koppelcode), geen formulier
   { value: 'google-search-console', label: 'Google Search Console', fields: [], credFields: [] },
   { value: 'browser', label: 'Browser (Chrome)', fields: [], credFields: [] },
+  { value: 'aio', label: 'AIO Dashboard', fields: [], credFields: [] },
 ] as const;
-const SPECIAL_TYPES = ['google-search-console', 'browser'];
+const SPECIAL_TYPES = ['google-search-console', 'browser', 'aio'];
+const isAio = (d: Device) => /^AIO/i.test(d.os_name ?? '');
 
 const ChromeIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z" />
+  </svg>
+);
+const AioIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /><path d="M13 9h4M13 13h4" />
   </svg>
 );
 const EditIcon = () => (
@@ -53,6 +65,8 @@ function ConnectorsPage() {
   const [testMsg, setTestMsg] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [browsers, setBrowsers] = useState<Device[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [myAgents, setMyAgents] = useState<AgentDef[]>([]);
+  const [agentIds, setAgentIds] = useState<string[]>([]);
 
   async function load() {
     try {
@@ -67,6 +81,7 @@ function ConnectorsPage() {
 
   useEffect(() => {
     load(); loadBrowsers();
+    agentsApi.list().then((r) => setMyAgents(r.agents.filter((a) => !a.shared_by))).catch(() => { /* ignore */ });
     // terugkeer van Google-login: formulier met de Google-kaart openen zodat de melding zichtbaar is
     if (new URLSearchParams(window.location.search).get('google')) { setType('google-search-console'); setShowForm(true); }
   }, []);
@@ -75,7 +90,7 @@ function ConnectorsPage() {
   const selectedType = CONNECTOR_TYPES.find((ct) => ct.value === type);
 
   function resetForm() {
-    setName(''); setConfigVals({}); setCredVals({});
+    setName(''); setConfigVals({}); setCredVals({}); setAgentIds([]);
     setEditingId(null); setError('');
     setType('git');
   }
@@ -90,7 +105,8 @@ function ConnectorsPage() {
     setName(conn.name);
     setType(conn.type as ConnectorTypeValue);
     const cfg: Record<string, string> = {};
-    Object.entries(conn.config ?? {}).forEach(([k, v]) => { cfg[k] = String(v ?? ''); });
+    Object.entries(conn.config ?? {}).forEach(([k, v]) => { if (k !== 'agent_ids') cfg[k] = String(v ?? ''); });
+    setAgentIds(Array.isArray(conn.config?.agent_ids) ? (conn.config.agent_ids as string[]) : []);
     setConfigVals(cfg);
     setCredVals({}); // credentials never returned — empty means "keep existing"
     setShowForm(true);
@@ -104,6 +120,7 @@ function ConnectorsPage() {
       const cfg: Record<string, unknown> = {};
       const credentials: Record<string, unknown> = {};
       selectedType?.fields.forEach((f) => { if (configVals[f.key]) cfg[f.key] = configVals[f.key]; });
+      if (type === 'ninjaone') { cfg.region = configVals.region || 'eu'; if (cfg.region !== 'custom') delete cfg.url; cfg.agent_ids = agentIds; }
       selectedType?.credFields.forEach((f) => { if (credVals[f.key]) credentials[f.key] = credVals[f.key]; });
 
       if (editingId) {
@@ -206,12 +223,20 @@ function ConnectorsPage() {
             <GoogleSearchConsoleCard embedded connected={list.some((c) => c.type === 'google-search-console')} onChanged={load} />
           )}
           {type === 'browser' && <BrowserConnectorCard mode="add" onChanged={() => { loadBrowsers(); setShowForm(false); resetForm(); }} />}
+          {type === 'aio' && <BrowserConnectorCard mode="add" kind="aio" onChanged={() => { loadBrowsers(); setShowForm(false); resetForm(); }} />}
 
-          {selectedType?.fields.map((f) => (
-            <div key={f.key}>
+          {selectedType?.fields.filter((f) => !('onlyRegion' in f) || (configVals.region || 'eu') === f.onlyRegion).map((f) => (
+            <div key={f.key} className="wa-row-in">
               <label className="block text-xs text-(--muted) mb-1">{f.label}</label>
+              {'options' in f ? (
+                <select value={configVals[f.key] || (f.key === 'region' ? 'eu' : '')} onChange={(e) => setConfigVals((v) => ({ ...v, [f.key]: e.target.value }))}
+                  className="w-full bg-(--bg) border border-(--border) rounded-lg px-3 py-2 text-(--text) text-sm focus:outline-none focus:border-(--accent)">
+                  {f.options.map(([val, lab]) => <option key={val} value={val}>{lab}</option>)}
+                </select>
+              ) : (
               <input type={f.type} value={configVals[f.key] ?? ''} onChange={(e) => setConfigVals((v) => ({ ...v, [f.key]: e.target.value }))}
                 className="w-full bg-(--bg) border border-(--border) rounded-lg px-3 py-2 text-(--text) text-sm focus:outline-none focus:border-(--accent)" />
+              )}
             </div>
           ))}
 
@@ -243,6 +268,28 @@ function ConnectorsPage() {
             </>
           )}
 
+          {'agents' in (selectedType ?? {}) && (
+            <div className="border-t border-(--border) pt-2">
+              <p className="text-xs text-(--muted) mb-2">Agents met toegang (leeg = alleen jouw hoofd-Claude, en alle agents als je niets kiest bij een oudere koppeling)</p>
+              {myAgents.length === 0 ? <p className="text-xs text-(--muted)">Je hebt nog geen eigen agents.</p> : (
+                <div className="flex flex-wrap gap-2">
+                  {myAgents.map((a) => {
+                    const on = agentIds.includes(a.id);
+                    return (
+                      <button type="button" key={a.id} aria-pressed={on}
+                        onClick={() => setAgentIds((x) => on ? x.filter((i) => i !== a.id) : [...x, a.id])}
+                        className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border text-sm transition-all duration-200 ${on ? 'border-(--accent) bg-(--accent)/10 text-(--text)' : 'border-(--border) text-(--muted) hover:text-(--text) hover:border-(--accent)/50'}`}>
+                        <AgentAvatar name={a.name} avatar={a.avatar} color={a.color} className="w-6 h-6 text-[10px]" />
+                        {a.name}
+                        <svg className={`w-3.5 h-3.5 transition-all duration-200 ${on ? 'opacity-100 scale-100' : 'opacity-0 scale-50 -ml-1.5'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {!special && <div className="flex gap-2 pt-1">
             <button type="submit" className="bg-(--accent-strong) hover:brightness-110 text-white text-sm px-4 py-2 rounded-control transition-colors">
               {editingId ? 'Opslaan' : t('save')}
@@ -269,6 +316,13 @@ function ConnectorsPage() {
                 <span className="font-medium text-(--text) text-sm truncate">{conn.name}</span>
                 <span className="hidden sm:inline text-[11px] text-(--muted) uppercase tracking-wide shrink-0">{conn.type}</span>
               </div>
+              {Array.isArray(conn.config?.agent_ids) && (conn.config.agent_ids as string[]).length > 0 && (
+                <div className="flex items-center gap-1 mt-1" title="Agents met toegang">
+                  {(conn.config.agent_ids as string[]).map((id) => myAgents.find((a) => a.id === id)).filter((a): a is AgentDef => !!a).map((a) => (
+                    <AgentAvatar key={a.id} name={a.name} avatar={a.avatar} color={a.color} className="w-5 h-5 text-[9px]" />
+                  ))}
+                </div>
+              )}
               {testMsg[conn.id] && (
                 <p className={`text-xs mt-0.5 truncate ${testMsg[conn.id].ok ? 'text-green-400' : 'text-red-400'}`} title={testMsg[conn.id].msg}>
                   {testMsg[conn.id].msg}
@@ -322,11 +376,11 @@ function ConnectorsPage() {
 
         {browsers.map((b, i) => (
           <div key={b.id} className="conn-row flex-wrap wa-row-in" style={{ '--i': Math.min(list.length + i, 10) } as React.CSSProperties}>
-            <span className="conn-type" aria-hidden><ChromeIcon /></span>
+            <span className="conn-type" aria-hidden>{isAio(b) ? <AioIcon /> : <ChromeIcon />}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-medium text-(--text) text-sm truncate">{b.name}</span>
-                <span className="hidden sm:inline text-[11px] text-(--muted) uppercase tracking-wide shrink-0">browser</span>
+                <span className="hidden sm:inline text-[11px] text-(--muted) uppercase tracking-wide shrink-0">{isAio(b) ? 'AIO Dashboard' : 'browser'}</span>
               </div>
             </div>
             <span className={`conn-state ${b.online ? 'is-on' : ''}`} title={b.online ? 'Online' : `Offline, ${ago(b.last_seen_at)}`}>

@@ -399,13 +399,20 @@ async function prepareAndRun(
 
   // Load ALL active connectors for this user (not just conversation-linked)
   const connResult = await query<{
-    name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null;
+    id: string; name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null;
   }>(
-    `SELECT name, type, config, credentials_enc
+    `SELECT id, name, type, config, credentials_enc
      FROM connectors
      WHERE user_id = $1 AND is_active = true`,
     [o.userId],
   );
+
+  // connectors limited to chosen agents (config.agent_ids): only for the owner's main Claude and those agents
+  {
+    const { runAgentIds, connectorAllowed } = await import('../services/ninjaone');
+    const runAgents = await runAgentIds(meta as Record<string, unknown>);
+    connResult.rows = connResult.rows.filter(c => connectorAllowed(c.config ?? {}, runAgents));
+  }
 
   const connectors: ConnectorConfig[] = connResult.rows.map(c => ({
     name: c.name,
@@ -433,6 +440,19 @@ async function prepareAndRun(
       connectors[i].credentials = { access_token: await accessTokenFor(row.credentials_enc) };
     } catch (err) {
       connectors[i].credentials = { error: (err as Error).message };
+    }
+  }));
+
+  // NinjaOne: Claude gets a per-run proxy token, never the client secret
+  await Promise.all(connResult.rows.map(async (row, i) => {
+    if (row.type !== 'ninjaone') return;
+    try {
+      const { issueNinjaToken, ninjaBase } = await import('../services/ninjaone');
+      connectors[i].credentials = { token: await issueNinjaToken(o.userId, row.id) };
+      connectors[i].config = { ...row.config, base: ninjaBase(row.config) };
+    } catch (err) {
+      connectors[i].credentials = {};
+      console.error('[stream] ninjaone token failed:', err);
     }
   }));
 
@@ -1032,7 +1052,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   const attempt = async (message: string, sid: string | null, first: boolean): Promise<string> => {
     const onEv = (ev: unknown) => handleEvent(ev as { type: string; [key: string]: unknown });
     const result = isSystemConv
-      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack' || c.type === 'google-search-console'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
+      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack' || c.type === 'google-search-console' || c.type === 'ninjaone'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
           language, first ? attachmentInfos : [], effectiveModel, { privileged: true, conversationId: conv.id, werkplek: !!(conv.metadata as { delegation_id?: string }).delegation_id })
       : await runTask(userId, message, sid, onEv, abort.signal, connectors, undefined,
           language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project });

@@ -35,7 +35,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const ownHeader = pathname.startsWith('/settings/adminprompt');
   // Phones reach the admin sections through the "Admin tools" tab: back arrow to that overview
   const isAdminTools = pathname.startsWith('/settings/beheer');
-  const isAdminSection = ['/settings/admin', '/settings/backups', '/settings/groepen', '/settings/installaties'].some((h) => isNavActive(pathname, h));
+  const isAdminSection = ['/settings/admin', '/settings/backups', '/settings/groepen'].some((h) => isNavActive(pathname, h));
   // Desktop: a readable column of at most 880px; wide tables keep the full width (Swarm follows the other Geheugen tabs)
   const fullWidth = ['/settings/apparaten', '/settings/admin/logs'].some((h) => isNavActive(pathname, h));
 

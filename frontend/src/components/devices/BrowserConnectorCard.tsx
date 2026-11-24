@@ -7,7 +7,7 @@ interface Enroll { code: string; expiresAt: string }
 interface ListResponse { devices: Device[]; settings: { requireTotp: boolean }; totpEnabled: boolean }
 
 /** Koppelingen: tegel 'Browser (Chrome)': extensie downloaden, installeren en koppelen met een koppelcode. */
-export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged }: { mode?: 'full' | 'add' | 'manage'; onlyId?: string; onChanged?: () => void } = {}) {
+export default function BrowserConnectorCard({ mode = 'full', kind = 'chrome', onlyId, onChanged }: { mode?: 'full' | 'add' | 'manage'; kind?: 'chrome' | 'aio'; onlyId?: string; onChanged?: () => void } = {}) {
   const [data, setData] = useState<ListResponse | null>(null);
   const [enroll, setEnroll] = useState<Enroll | null>(null);
   const [open, setOpen] = useState(mode === 'add');
@@ -67,7 +67,7 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
         </svg>}
         <div className="flex-1 min-w-0">
           {mode === 'full' && <div className="text-sm font-medium text-(--text)">Browser (Chrome)</div>}
-          <p className="text-xs text-(--muted)">Claude kan in jouw Chrome tabbladen lezen, navigeren, klikken, typen en een screenshot maken. Alleen na koppeling; interne pagina&apos;s (chrome://) worden nooit bediend.</p>
+          {kind === 'aio' ? <p className="text-xs text-(--muted)">Claude kan de diensten van AIO Dashboard (en FocusTrack) lezen, bedienen en een screenshot laten maken, zonder dat je ze eerst deelt. Je ziet in AIO wanneer Claude bezig is en kunt met Stop onderbreken; pauzeren of ontkoppelen kan in AIO onder Instellingen.</p> : <p className="text-xs text-(--muted)">Claude kan in jouw Chrome tabbladen lezen, navigeren, klikken, typen en een screenshot maken. Alleen na koppeling; interne pagina&apos;s (chrome://) worden nooit bediend.</p> }
         </div>
         {mode === 'full' && <button className={open ? ghost : primary} onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'Sluiten' : 'Browser toevoegen'}</button>}
       </div>}
@@ -105,20 +105,28 @@ export default function BrowserConnectorCard({ mode = 'full', onlyId, onChanged 
 
       {open && (
         <div className="space-y-4 pt-1">
+          {kind === 'aio' ? (
+            <ol className="list-decimal pl-5 space-y-1 text-xs text-(--muted)">
+              <li>Open in AIO Dashboard (versie 4.38 of nieuwer) Instellingen en zoek het blok Claude Chat.</li>
+              <li>Vul het adres van deze Claude Chat en onderstaande koppelcode in en kies Koppelen.</li>
+              <li>AIO verschijnt hieronder als koppeling. Pauzeren of ontkoppelen kan in AIO; verwijderen hier ontkoppelt AIO ook.</li>
+            </ol>
+          ) : (
           <ol className="list-decimal pl-5 space-y-1 text-xs text-(--muted)">
             <li>Maak een koppelcode en download daarna de extensie: die zip koppelt zichzelf na het laden.</li>
             <li>Pak de zip uit en ga in Chrome naar <span className="font-mono text-(--text)">chrome://extensions</span> met Ontwikkelaarsmodus aan.</li>
             <li>Kies Uitgepakte extensie laden en selecteer de map. Klaar, geen code typen.</li>
             <li>Updates: de extensie meldt zelf een nieuwe versie. Pak die uit over dezelfde map en klik op vernieuwen.</li>
           </ol>
+          )}
           {enroll && (
             <div>
               <div className="text-xs text-(--muted)">Koppelcode, geldig tot {new Date(enroll.expiresAt).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}</div>
               <div className="text-2xl font-semibold tracking-[0.2em] text-(--text) select-all">{enroll.code}</div>
-              <a href={`/api/devices/download/browser-extension.zip?code=${encodeURIComponent(enroll.code)}`} className={`${primary} inline-block mt-2 motion-safe:animate-[ccFadeIn_.2s_ease-out]`}>Extensie downloaden (koppelt zichzelf)</a>
+              {kind !== 'aio' && <a href={`/api/devices/download/browser-extension.zip?code=${encodeURIComponent(enroll.code)}`} className={`${primary} inline-block mt-2 motion-safe:animate-[ccFadeIn_.2s_ease-out]`}>Extensie downloaden (koppelt zichzelf)</a>}
               <style>{'@keyframes ccFadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}'}</style>
-              <div className="flex items-center gap-2 text-xs text-(--muted) mt-1"><span className="w-2 h-2 rounded-full bg-(--accent) animate-pulse" /> Wacht op de browser…</div>
-              <a href="/api/devices/download/browser-extension.zip" className="inline-block mt-2 text-xs text-(--accent) hover:underline">Of zonder code downloaden (update)</a>
+              <div className="flex items-center gap-2 text-xs text-(--muted) mt-1"><span className="w-2 h-2 rounded-full bg-(--accent) animate-pulse" /> {kind === 'aio' ? 'Wacht op AIO Dashboard…' : 'Wacht op de browser…'}</div>
+              {kind !== 'aio' && <a href="/api/devices/download/browser-extension.zip" className="inline-block mt-2 text-xs text-(--accent) hover:underline">Of zonder code downloaden (update)</a>}
             </div>
           )}
           {err && <div className="text-xs text-red-400">{err}</div>}

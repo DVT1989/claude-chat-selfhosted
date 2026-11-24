@@ -12,7 +12,7 @@ interface TestResult {
   message: string;
 }
 
-type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack' | 'google-search-console';
+type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack' | 'google-search-console' | 'ninjaone';
 
 /** GitHub token: who is it, and may it run Actions (checked on the first repo it can see). */
 async function testGithub(credentials: Record<string, unknown>): Promise<TestResult> {
@@ -66,6 +66,8 @@ export async function testConnector(
         return await testGithub(credentials);
       case 'focustrack':
         return await testFocustrack(config, credentials);
+      case 'ninjaone':
+        return await (await import('./ninjaone')).testNinja(config, credentials);
       case 'google-search-console':
         return await (await import('./googleSearchConsole')).testGsc(credentials);
       case 'ssh':

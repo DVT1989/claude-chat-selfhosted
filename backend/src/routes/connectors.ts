@@ -8,7 +8,7 @@ import { testConnector } from '../services/connectors';
 
 export const connectorsRouter = Router();
 
-const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack', 'google-search-console'] as const;
+const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack', 'google-search-console', 'ninjaone'] as const;
 type ConnectorType = (typeof CONNECTOR_TYPES)[number];
 
 // ── All routes below require authentication ──────────────────────────────────
@@ -32,6 +32,14 @@ connectorsRouter.get('/', async (req: Request, res: Response, next) => {
   }
 });
 
+/** config.agent_ids: only own agents of this user (empty = every agent, as before). */
+async function cleanConfig(userId: string, config: Record<string, unknown> | undefined): Promise<Record<string, unknown> | undefined> {
+  if (!config || !('agent_ids' in config)) return config;
+  const ids = Array.isArray(config.agent_ids) ? [...new Set((config.agent_ids as unknown[]).map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))] : [];
+  const own = ids.length ? (await query<{ id: string }>('SELECT id::text AS id FROM agents WHERE user_id = $1 AND id::text = ANY($2::text[])', [userId, ids])).rows.map((r) => r.id) : [];
+  return { ...config, agent_ids: own };
+}
+
 const connectorSchema = z.object({
   name: z.string().min(1).max(255),
   type: z.enum(CONNECTOR_TYPES),
@@ -45,6 +53,7 @@ connectorsRouter.post('/', async (req: Request, res: Response, next) => {
     const body = connectorSchema.parse(req.body);
     if (body.type === 'google-search-console') throw new AppError(400, 'Deze koppeling maak je met Inloggen met Google');
 
+    body.config = await cleanConfig(req.user!.userId, body.config);
     const credEnc = body.credentials
       ? encrypt(JSON.stringify(body.credentials))
       : null;
@@ -97,6 +106,7 @@ connectorsRouter.put('/:id', async (req: Request, res: Response, next) => {
     let idx = 1;
 
     if (body.name !== undefined) { updates.push(`name = $${idx++}`); values.push(body.name); }
+    body.config = await cleanConfig(req.user!.userId, body.config);
     if (body.config !== undefined) { updates.push(`config = $${idx++}`); values.push(JSON.stringify(body.config)); }
     if (body.credentials !== undefined) {
       updates.push(`credentials_enc = $${idx++}`);

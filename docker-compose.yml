@@ -78,6 +78,8 @@ services:
       - DOCKER_API_VERSION=1.43
       - PROJECT_DIR=${PROJECT_DIR:-/volume1/docker/claude-chat}
       - HOST_LABEL=${HOST_LABEL:-server}
+      # optional cap for automatic agent updates (empty = always the newest version)
+      - AGENT_AUTO_UPDATE_MAX=${AGENT_AUTO_UPDATE_MAX:-}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
     volumes:
       - workspace_data:/workspace
@@ -86,6 +88,7 @@ services:
       - ./import:/import:ro
       - whatsapp_data:/data/whatsapp
       - browser_data:/data/browser
+      - transfers_data:/data/transfers
       # Admin chat + backups: docker socket and project dir (only reachable with gid 0, see backend/Dockerfile)
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECT_DIR:-/volume1/docker/claude-chat}:${PROJECT_DIR:-/volume1/docker/claude-chat}
@@ -162,6 +165,8 @@ volumes:
   home_data:
     driver: local
   browser_data:
+    driver: local
+  transfers_data:
     driver: local
   whatsapp_data:
     driver: local

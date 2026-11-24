@@ -10,6 +10,7 @@ import * as dev from '../services/devices';
 import { getNas, VIEW_W, VIEW_H } from '../services/nasBrowser';
 import * as pwStore from '../services/nasPasswords';
 import { actBody, claudeAct, claudeScreen, endDeviceSessions } from './remote';
+import * as xf from '../services/fileTransfers';
 import { broadcastSse } from '../services/sseEvents';
 import { buildExtensionZip, extensionVersion, EXT_DIR } from '../services/browserExtension';
 
@@ -291,6 +292,78 @@ agent.post('/result', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// ── Large file transfers (agent side): upload in blocks, download with Range, progress, completion ──
+
+agent.get('/xfer/:id/up-status', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'up');
+    res.json({ received: Number(t.up_bytes), size: Number(t.size) });
+  } catch (err) { next(err); }
+});
+
+agent.put('/xfer/:id/chunk', express.raw({ type: '*/*', limit: '17mb' }), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'up');
+    const offset = Number(req.query.offset);
+    if (!Number.isInteger(offset) || offset < 0 || !Buffer.isBuffer(req.body)) throw new AppError(400, 'offset of data ongeldig');
+    const received = await xf.writeChunk(t, offset, req.body, String(req.headers['x-sha256'] ?? ''));
+    res.json({ received });
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode === 409 && err.message.startsWith('{')) { res.status(409).json(JSON.parse(err.message)); return; }
+    next(err);
+  }
+});
+
+agent.post('/xfer/:id/up-done', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'up');
+    const b = z.object({ sha256: z.string().length(64), size: z.number().int().min(0) }).parse(req.body);
+    await xf.uploadDone(t, b.sha256, b.size);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+agent.get('/xfer/:id/down-info', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'down');
+    res.json({ size: Number(t.size), sha256: t.sha256 });
+  } catch (err) { next(err); }
+});
+
+agent.get('/xfer/:id/down', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'down');
+    res.set('Cache-Control', 'no-store').set('X-Sha256', t.sha256 ?? '');
+    res.sendFile(xf.stagePath(t.id), { acceptRanges: true, etag: false, lastModified: false, cacheControl: false }, (err) => { if (err && !res.headersSent) next(err); });
+  } catch (err) { next(err); }
+});
+
+agent.post('/xfer/:id/down-progress', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'down');
+    await xf.downloadProgress(t, z.object({ bytes: z.number().int().min(0) }).parse(req.body).bytes);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+agent.post('/xfer/:id/down-done', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.xferForAgent(String(req.params.id), (res.locals.device as dev.AgentDevice).id, 'down');
+    await xf.downloadDone(t, z.object({ sha256: z.string().length(64) }).parse(req.body).sha256);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+agent.post('/xfer/:id/fail', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.getTransfer(String(req.params.id));
+    const id = (res.locals.device as dev.AgentDevice).id;
+    if (!t || (t.src_device_id !== id && t.dst_device_id !== id)) throw new AppError(404, 'Overdracht onbekend');
+    await xf.finish(t, 'failed', String(req.body?.error ?? 'onbekende fout').slice(0, 500));
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 agent.post('/inventory', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const d = res.locals.device as dev.AgentDevice;
@@ -375,6 +448,7 @@ claude.get('/list', async (_req: Request, res: Response, next: NextFunction) => 
       return {
         id: d.id, name: d.name, online: d.online, enabled: d.enabled, os: d.os === 'browser' || d.os === dev.NAS_OS ? d.os : d.os_name ?? d.os, lastSeen: d.last_seen_at,
         model: inv.model, user: inv.user, rebootPending: inv.rebootPending, inventoryAt: d.inventory_at,
+        ...(d.os === 'browser' ? { kind: dev.browserKind(d.os_name) } : {}),
       };
     }));
   } catch (err) { next(err); }
@@ -586,6 +660,40 @@ claude.post('/:dev/exec', express.text({ type: '*/*', limit: '1mb' }), async (re
     const { device, result } = await jobFor(res.locals.scope as dev.Scope, String(req.params.dev), { type: 'exec', command, shell, timeoutSec, runas, elevated }, timeoutSec);
     await auditLog(userId, 'device.exec', 'device', device.id, '', { device: device.name, shell: shell || 'default', runas, elevated, command: command.slice(0, 1000), exitCode: result.exitCode, ok: result.ok });
     res.json({ ok: result.ok, exitCode: result.exitCode, output: result.output ?? '', error: result.error, durationMs: result.durationMs });
+  } catch (err) { next(err); }
+});
+
+// ── Copy files between devices (and the NAS for admins): chunked, resumable, with checksum ──
+
+claude.post('/copy', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const b = z.object({
+      from: z.string().min(1).max(200), fromPath: z.string().min(1).max(1000),
+      to: z.string().min(1).max(200), toPath: z.string().min(1).max(1000), overwrite: z.boolean().optional(),
+    }).parse(req.body);
+    const t = await xf.createTransfer(res.locals.userId as string, { ...b, origin: 'claude' });
+    res.status(202).json(xf.publicView(t));
+  } catch (err) { next(err); }
+});
+
+claude.get('/transfers', async (_req: Request, res: Response, next: NextFunction) => {
+  try { res.json((await xf.listTransfers(res.locals.userId as string)).map(xf.publicView)); } catch (err) { next(err); }
+});
+
+claude.get('/transfers/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.getTransfer(String(req.params.id), res.locals.userId as string);
+    if (!t) throw new AppError(404, 'Overdracht niet gevonden');
+    res.json(xf.publicView(t));
+  } catch (err) { next(err); }
+});
+
+claude.delete('/transfers/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const t = await xf.getTransfer(String(req.params.id), res.locals.userId as string);
+    if (!t) throw new AppError(404, 'Overdracht niet gevonden');
+    await xf.cancelTransfer(t);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -1088,6 +1196,8 @@ function maybeAutoUpdate(d: dev.AgentDevice, os: string | null, current: string 
   if (process.env.AGENT_AUTO_UPDATE === '0' || !enabled || (os !== 'windows' && os !== 'darwin')) return;
   const target = latestAgent();
   if (!target || !current || !verLess(current, target)) return;
+  const cap = process.env.AGENT_AUTO_UPDATE_MAX;
+  if (cap && verLess(cap, target)) return; // newer than approved for automatic roll-out
   const prev = autoTried.get(d.id);
   if (prev && prev.target === target && (prev.tries >= 3 || Date.now() - prev.at < AUTO_RETRY_MS)) return;
   autoTried.set(d.id, { target, at: Date.now(), tries: prev?.target === target ? prev.tries + 1 : 1 });

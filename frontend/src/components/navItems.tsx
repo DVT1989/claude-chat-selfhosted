@@ -35,6 +35,7 @@ export const NavIcons = {
   terminal: (c?: string) => <Icon className={c}><rect x="2" y="4" width="20" height="16" rx="3" /><path d="m7 9 3 3-3 3M13 15h4" /></Icon>,
   users: (c?: string) => <Icon className={c}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></Icon>,
   /** two nodes with a two-way link: linked installations */
+  groups: (c?: string) => <Icon className={c}><rect x="2" y="3" width="20" height="18" rx="4" /><circle cx="9" cy="10" r="2.5" /><circle cx="15.5" cy="10.5" r="2" /><path d="M5 18a4 4 0 0 1 8 0M13.5 17.5a3 3 0 0 1 5.5-1.6" /></Icon>,
   federation: (c?: string) => <Icon className={c}><rect x="2" y="3" width="8" height="7" rx="2" /><rect x="14" y="14" width="8" height="7" rx="2" /><path d="M6 10v4a3 3 0 0 0 3 3h5M18 14v-4a3 3 0 0 0-3-3h-5" /></Icon>,
   backups: (c?: string) => <Icon className={c}><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14a9 3 0 0 0 18 0V5" /><path d="M3 12a9 3 0 0 0 18 0" /></Icon>,
   shield: (c?: string) => <Icon className={c}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z" /><path d="m9 12 2 2 4-4" /></Icon>,
@@ -104,7 +105,13 @@ export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
   const n = l.n ?? ((k: string) => k);
   return [
     { title: 'Account', items: [
-      { href: '/settings/profiel', label: l.profile, short: n('profile'), icon: NavIcons.profile, tint: 'bg-zinc-500' },
+      // admins: Installaties (federation) as a second tab under Profiel
+      isAdmin
+        ? { href: '/settings/profiel', label: l.profile, short: n('profile'), icon: NavIcons.profile, tint: 'bg-zinc-500', color: '#71717a', children: [
+            { href: '/settings/profiel', label: l.profile, short: n('profile'), icon: NavIcons.profile, tint: 'bg-zinc-500' },
+            { href: '/settings/installaties', label: 'Installaties', short: 'Installaties', icon: NavIcons.federation, tint: 'bg-violet-500' },
+          ] }
+        : { href: '/settings/profiel', label: l.profile, short: n('profile'), icon: NavIcons.profile, tint: 'bg-zinc-500' },
     ] },
     // One rail item; the four pages are tabs inside it (see SubTabs in settings/layout.tsx)
     { title: 'Koppelingen', items: [
@@ -137,10 +144,12 @@ export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
     ] },
     ...(isAdmin ? [{ title: ADMIN_GROUP, items: [
       { href: '/settings/adminprompt', label: n('adminChat'), short: n('adminShort'), icon: NavIcons.terminal, tint: 'bg-slate-600' },
-      { href: '/settings/admin', label: l.users, short: n('users'), icon: NavIcons.users, tint: 'bg-emerald-500' },
-      { href: '/settings/groepen', label: n('groups'), short: n('groups'), icon: NavIcons.users, tint: 'bg-sky-500' },
+      // Gebruikers as a group: accounts (opens first) and Groepen
+      { href: '/settings/admin', label: l.users, short: n('users'), icon: NavIcons.users, tint: 'bg-emerald-500', color: '#10b981', children: [
+        { href: '/settings/admin', label: l.users, short: n('users'), icon: NavIcons.users, tint: 'bg-emerald-500' },
+        { href: '/settings/groepen', label: n('groups'), short: n('groups'), icon: NavIcons.groups, tint: 'bg-sky-500' },
+      ] },
       { href: '/settings/backups', label: n('backups'), short: n('backups'), icon: NavIcons.backups, tint: 'bg-teal-500' },
-      { href: '/settings/installaties', label: 'Installaties', short: 'Installaties', icon: NavIcons.federation, tint: 'bg-violet-500' },
     ] }] : []),
   ];
 }

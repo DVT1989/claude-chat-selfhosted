@@ -40,6 +40,8 @@ type Job struct {
 	DataB64    string `json:"dataB64,omitempty"`
 	Session    string `json:"session,omitempty"`
 	Key        string `json:"key,omitempty"`
+	Xfer       string `json:"xfer,omitempty"`
+	Overwrite  bool   `json:"overwrite,omitempty"`
 }
 
 type Result struct {

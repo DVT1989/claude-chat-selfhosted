@@ -14,7 +14,7 @@
 import { chownSync, existsSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
-import { scrub } from './agentTraining';
+import { scrub, renderAssistant } from './agentTraining';
 import { redis } from '../redis';
 import * as mem from './memory';
 import { addLessonWithId, deleteLesson } from './lessons';
@@ -212,7 +212,8 @@ function toolLines(m: Msg, max = 8): string[] {
 function transcript(msgs: Msg[], max = TRANSCRIPT_MAX): string {
   const parts = msgs.map((m) => {
     const head = m.role === 'user' ? 'GEBRUIKER' : 'CLAUDE';
-    const body = m.role === 'user' ? clip(m.content, 1400, 300) : clip(m.content, 700, 700);
+    // tool turns are stored as a JSON list of events: read them as text plus one line per tool
+    const body = m.role === 'user' ? clip(m.content, 1400, 300) : m.content.startsWith('[{') ? clip(renderAssistant(m.content), 700, 700) : clip(m.content, 700, 700);
     return [`${head} (${m.created_at.toISOString().slice(0, 16).replace('T', ' ')}):`, body, ...(m.role === 'assistant' ? toolLines(m) : [])].join('\n');
   });
   let out = '';

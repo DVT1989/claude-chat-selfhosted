@@ -175,6 +175,43 @@ function partialLastId(content: string): { run: string; n: number } | null {
 }
 
 // ── Main chat window ─────────────────────────────────────────
+// Horizontal space a textarea reserves for text beyond its CSS padding and border (sum of both sides).
+// Measured with an offscreen probe: the narrowest width at which a known unbreakable run still fits on one
+// line, minus the run's own width. Cached per font, since only the font changes the outcome.
+const insetCache = new Map<string, number>();
+function textareaInset(cs: CSSStyleDeclaration): number {
+  const key = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily} ${cs.letterSpacing}`;
+  const hit = insetCache.get(key);
+  if (hit !== undefined) return hit;
+  const font = { fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontStyle: cs.fontStyle, letterSpacing: cs.letterSpacing, lineHeight: cs.lineHeight };
+  const hide = { position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', pointerEvents: 'none' };
+  const RUN = 'MMMMMMMMMMMM';
+  const span = document.createElement('span');
+  Object.assign(span.style, font, hide, { whiteSpace: 'pre' });
+  span.textContent = RUN;
+  const probe = document.createElement('textarea');
+  Object.assign(probe.style, font, hide, { boxSizing: 'content-box', padding: '0', border: '0', margin: '0', overflow: 'hidden', resize: 'none', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', height: '0', minHeight: '0', maxHeight: 'none' });
+  probe.rows = 1;
+  probe.tabIndex = -1;
+  document.body.append(span, probe);
+  let inset = 0;
+  try {
+    const w = span.getBoundingClientRect().width;
+    probe.value = 'M';
+    probe.style.width = `${Math.ceil(w) + 60}px`;
+    const oneLine = probe.scrollHeight;
+    probe.value = RUN;
+    const fits = (px: number) => { probe.style.width = `${px}px`; return probe.scrollHeight <= oneLine; };
+    let lo = Math.floor(w) - 1, hi = Math.ceil(w) + 40;
+    if (oneLine > 0 && fits(hi) && !fits(lo)) {
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (fits(mid)) hi = mid; else lo = mid; }
+      inset = Math.max(0, Math.min(20, hi - Math.ceil(w)));
+    }
+  } finally { span.remove(); probe.remove(); }
+  insetCache.set(key, inset);
+  return inset;
+}
+
 export default function ChatWindow({ conversationId, initialMessages, titleOverride, headerExtra }: Props) {
   const tr = useTranslations('chat');
   // Use a stable selector to avoid re-renders when unrelated store slices change
@@ -475,10 +512,9 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
         'fontKerning', 'textRendering', 'fontVariantLigatures', 'fontFeatureSettings', 'overflowWrap', 'wordBreak', 'whiteSpace'] as const) {
         (mi.style as unknown as Record<string, string>)[k] = cs[k] as string;
       }
-      // iOS WebKit insets textarea text by 3px left and right on top of the CSS padding; without it the
-      // mirror is 6px wider, fits an extra word on a line and the glow lands a word too early
-      const IOS = typeof navigator !== 'undefined' && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
-      const inset = IOS ? 3 : 0;
+      // Some engines (older iOS WebKit) inset textarea text a few px beyond the CSS padding, others don't.
+      // Guessing per platform put the glow a word off either way, so measure the real inset once per font.
+      const inset = textareaInset(cs) / 2;
       for (const k of ['paddingTop', 'paddingBottom'] as const) mi.style[k] = `${(parseFloat(cs[k]) || 0) + G}px`;
       for (const k of ['paddingRight', 'paddingLeft'] as const) mi.style[k] = `${(parseFloat(cs[k]) || 0) + G + inset}px`;
       mi.style.width = `${ta.clientWidth + 2 * G}px`;
@@ -1178,6 +1214,54 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   }
 
   const [dragOver, setDragOver] = useState(false);
+  const uploadFilesRef = useRef(uploadFiles);
+  uploadFilesRef.current = uploadFiles;
+
+  // Drop anywhere in the window (not only on the composer); otherwise the browser
+  // opens the dropped image itself. Also accepts images dragged from a web page (URL only).
+  useEffect(() => {
+    let depth = 0;
+    const isFileDrag = (e: DragEvent) => {
+      const t = Array.from(e.dataTransfer?.types ?? []);
+      return t.includes('Files') || t.includes('text/uri-list');
+    };
+    const onEnter = (e: DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); depth++; setDragOver(true); };
+    const onOver = (e: DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; };
+    const onLeave = (e: DragEvent) => { if (!isFileDrag(e)) return; depth = Math.max(0, depth - 1); if (!depth) setDragOver(false); };
+    const onDrop = async (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      depth = 0; setDragOver(false);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const files = Array.from(dt.files ?? []);
+      if (files.length) { void uploadFilesRef.current(files); return; }
+      // image dragged from a web page: only a URL comes along
+      const html = dt.getData('text/html');
+      const src = html.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] || dt.getData('text/uri-list').split(/\r?\n/).find(l => l && !l.startsWith('#'));
+      if (!src) return;
+      try {
+        const r = await fetch(src);
+        if (!r.ok) throw new Error(String(r.status));
+        const blob = await r.blob();
+        const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/\+.*/, '');
+        const base = decodeURIComponent(src.split(/[?#]/)[0].split('/').pop() || '').replace(/[^\w.-]/g, '') || `afbeelding.${ext}`;
+        void uploadFilesRef.current([new File([blob], /\.\w{2,5}$/.test(base) ? base : `${base}.${ext}`, { type: blob.type })]);
+      } catch {
+        setError({ title: 'Dit plaatje kan ik niet ophalen', detail: 'De site blokkeert dat. Sla het eerst op, of kopieer en plak het.' });
+      }
+    };
+    window.addEventListener('dragenter', onEnter);
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('dragleave', onLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onEnter);
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('dragleave', onLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
 
   async function removeAttachment(id: string) {
     try {
@@ -1471,9 +1555,6 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
           </div>
         )}
         <div
-          onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOver(true); } }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDragOver(false); void uploadFiles(Array.from(e.dataTransfer.files)); } }}
           className={clsx(
           'relative bg-(--input) rounded-(--radius-composer) border px-3 pt-3 pb-2 md:px-4',
           dragOver && 'ring-2 ring-(--accent)/60',

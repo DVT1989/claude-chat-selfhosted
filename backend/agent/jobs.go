@@ -104,6 +104,19 @@ func handleJob(ctx context.Context, cfg *Config, j Job) {
 			return
 		}
 		r.OK, r.Output = true, fmt.Sprintf("%d bytes geschreven naar %s", len(b), j.Path)
+	case "upload":
+		size, err := startUpload(ctx, cfg, j.Xfer, j.Path)
+		if err != nil {
+			r.Error = err.Error()
+			return
+		}
+		r.OK, r.Data = true, map[string]any{"size": size}
+	case "download":
+		if err := startDownload(ctx, cfg, j.Xfer, j.Path, j.Overwrite); err != nil {
+			r.Error = err.Error()
+			return
+		}
+		r.OK, r.Output = true, "download gestart"
 	case "update":
 		// j.Path = download URL of the installer (Windows) or install script (Mac)
 		if err := startUpdate(j.Path); err != nil {

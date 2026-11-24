@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { agentsApi, claudeAuth, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining, type ClaudeAccountInfo, type ShareTargets } from '@/lib/api';
+import { agentsApi, connectors as connApi, claudeAuth, models as modelsApi, type AgentDef, type AgentInput, type AgentTraining, type ClaudeAccountInfo, type ShareTargets } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { Bar, time as fmtTime } from '@/components/ClaudeAccounts';
 import clsx from 'clsx';
@@ -400,10 +400,13 @@ export default function AgentsPage() {
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const [switching, setSwitching] = useState<string | null>(null);
 
+  const [conns, setConns] = useState<Array<{ name: string; type: string; agent_ids: string[] }>>([]);
   const apply = (agents: AgentDef[]) => { setList(agents); setAgentsCache(agents); setEditing(null); };
   useEffect(() => {
     agentsApi.list().then((r) => { setList(r.agents); setAgentsCache(r.agents); }).catch((e) => setErr((e as Error).message));
     claudeAuth.accounts().then((r) => setAccounts(r.accounts)).catch(() => {});
+    connApi.list().then((r) => setConns(r.connectors.filter((c) => c.is_active && Array.isArray(c.config?.agent_ids) && (c.config.agent_ids as string[]).length)
+      .map((c) => ({ name: c.name, type: c.type, agent_ids: c.config.agent_ids as string[] })))).catch(() => {});
     modelsApi.list().then((r) => setModelOptions(r.models.filter((m) => m.id !== 'opusplan').map((m) => ({ id: m.id, label: m.label })))).catch(() => {});
   }, []);
 
@@ -472,6 +475,16 @@ export default function AgentsPage() {
                   )}
                 </div>
                 <p className="text-xs text-(--muted) truncate">{a.description}</p>
+                {conns.some((c) => c.agent_ids.includes(a.id)) && (
+                  <div className="flex flex-wrap gap-1 mt-1.5" title="Koppelingen waar deze agent bij mag">
+                    {conns.filter((c) => c.agent_ids.includes(a.id)).map((c) => (
+                      <span key={c.name} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent)">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </button>
             <TrainPanel agent={a} />

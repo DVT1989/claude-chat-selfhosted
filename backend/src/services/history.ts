@@ -90,6 +90,6 @@ export async function rankConversations(userId: string, terms: string[], limit =
        LATERAL (SELECT count(*) AS total FROM messages x WHERE x.conversation_id = m.conversation_id) n
      WHERE c.user_id = $1 AND c.status <> 'deleted' AND ${TSV} @@ q
      GROUP BY m.conversation_id ORDER BY score DESC LIMIT $3`,
-    [userId, parts.map((p) => `(${p})`).join(' | '), Math.min(Math.max(limit, 1), 100)]);
+    [userId, parts.map((p) => `(${p})`).join(' | '), Math.min(Math.max(limit, 1), 1000)]);
   return r.rows;
 }

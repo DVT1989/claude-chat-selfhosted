@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'child_process';
 import { languageLabel } from './i18n';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, symlinkSync, readlinkSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, rmSync, symlinkSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { randomBytes, createHash } from 'crypto';
 import { config } from '../config';
@@ -779,7 +779,7 @@ function extractIsoTimestamp(text: string): string | null {
 // ── Connector config type ────────────────────────────────────
 export interface ConnectorConfig {
   name: string;
-  type: 'ssh' | 'sftp' | 'ftp' | 'smb' | 'git' | 'github' | 'python' | 'sudo' | 'm365' | 'messenger' | 'devices' | 'lessons' | 'focustrack' | 'google-search-console';
+  type: 'ssh' | 'sftp' | 'ftp' | 'smb' | 'git' | 'github' | 'python' | 'sudo' | 'm365' | 'messenger' | 'devices' | 'lessons' | 'focustrack' | 'google-search-console' | 'ninjaone';
   config: Record<string, unknown>;
   credentials: Record<string, unknown>;
 }
@@ -955,6 +955,44 @@ function focustrackSection(workspace: string, conn: ConnectorConfig): string[] {
   ];
 }
 
+/** NinjaOne (RMM/PSA): Claude uses a loopback proxy with a per-run token; the client secret stays in the backend. */
+function ninjaoneSection(workspace: string, conn: ConnectorConfig): string[] {
+  const token = String(conn.credentials.token ?? '');
+  if (!token) return [];
+  const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tokenFile = `.ninjaone-${alias}.token`;
+  writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
+  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  const base = String(conn.config.base ?? '');
+  return [
+    `## NinjaOne — ${conn.name}${base ? ` (${base})` : ''}`,
+    'Tickets, borden en technici in NinjaOne via een lokale proxy: http://127.0.0.1:4000/ninjaone/claude/v2/... (zelfde paden als de NinjaOne API v2, met header x-ninjaone-token). Het Client Secret krijg je nooit te zien en hoeft niet.',
+    '```bash',
+    `NJ() { curl -s -H "x-ninjaone-token: $(cat ~/${tokenFile} 2>/dev/null || cat ${tokenFile})" "$@"; }`,
+    'NJ http://127.0.0.1:4000/ninjaone/claude/v2/users?userType=TECHNICIAN   # technici met id',
+    'NJ http://127.0.0.1:4000/ninjaone/claude/v2/ticketing/trigger/boards    # borden',
+    `NJ -X POST -H "Content-Type: application/json" http://127.0.0.1:4000/ninjaone/claude/v2/ticketing/trigger/board/3/run -d '{"pageSize":50}'   # tickets van bord 3`,
+    '```',
+    'Endpoints (NinjaOne API v2, via de proxy; {id} = ticketnummer):',
+    '- GET /v2/ticketing/trigger/boards: borden. POST /v2/ticketing/trigger/board/{boardId}/run met JSON {"pageSize":50,"lastCursorId":0,"searchCriteria":"...","filters":[...]}: tickets van een bord (bladeren met lastCursorId uit het antwoord).',
+    '- GET /v2/ticketing/ticket/{id}: ticket (o.a. version, clientId, ticketFormId, requesterUid, status, subject, assignedAppUserId).',
+    '- GET /v2/ticketing/ticket/{id}/log-entry?type=COMMENT&type=DESCRIPTION&pageSize=100: logboek (omschrijving, opmerkingen, wijzigingen).',
+    '- GET /v2/users?userType=TECHNICIAN: technici (id = assignedAppUserId). GET /v2/ticketing/statuses: statussen. GET /v2/ticketing/app-user-contact: gebruikers en contacten.',
+    '- PUT /v2/ticketing/ticket/{id}: ticket bijwerken, ook toewijzen. De API eist de verplichte velden opnieuw: haal eerst het ticket op (GET) en stuur version, clientId, ticketFormId, requesterUid, status en subject ongewijzigd mee, met alleen assignedAppUserId aangepast. Kopieer geen andere velden die je niet wilt wijzigen.',
+    '- POST /v2/ticketing/ticket/{id}/comment: opmerking (multipart/form-data, deel "comment" met JSON volgens NewTicketLogEntry: public (verplicht), body, htmlBody, timeTracked).',
+    '```bash',
+    `# toewijzen aan technicus 12`,
+    `T=$(NJ http://127.0.0.1:4000/ninjaone/claude/v2/ticketing/ticket/123)`,
+    `BODY=$(echo "$T" | python3 -c "import json,sys;t=json.load(sys.stdin);print(json.dumps({k:t[k] for k in ('version','clientId','ticketFormId','requesterUid','status','subject')}|{'assignedAppUserId':12}))")`,
+    `NJ -X PUT -H "Content-Type: application/json" http://127.0.0.1:4000/ninjaone/claude/v2/ticketing/ticket/123 -d "$BODY"`,
+    `# privé-opmerking (public:false is verplicht; de proxy weigert alles anders)`,
+    `NJ -X POST http://127.0.0.1:4000/ninjaone/claude/v2/ticketing/ticket/123/comment -F 'comment={"public":false,"body":"Oplossingsvoorstel: ..."};type=application/json'`,
+    '```',
+    'Regels: lezen mag vrij. Schrijven (toewijzen, opmerking) alleen als de opdracht of de taak dat toestaat. Nooit een publieke opmerking naar de klant: de proxy weigert een comment zonder "public":false. Controleer na het schrijven met GET of het ticket en het logboek kloppen. Bij een fout van de API (400/403/409) de melding lezen en melden; niet blind herhalen.',
+    '',
+  ];
+}
+
 /** Google Search Console: read-only access token (fresh per run, refreshed in routes/stream.ts) for SEO analysis. */
 function gscSection(workspace: string, conn: ConnectorConfig): string[] {
   const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -1052,7 +1090,7 @@ function githubSection(workspace: string, conn: ConnectorConfig): string[] {
 function devicesSection(workspace: string, conn: ConnectorConfig): string[] {
   const out: string[] = [];
   const token = conn.credentials.token as string | undefined;
-  const devices = (conn.config.devices as Array<{ id: string; name: string; os: string | null; online: boolean }> | undefined) ?? [];
+  const devices = (conn.config.devices as Array<{ id: string; name: string; os: string | null; online: boolean; kind?: string }> | undefined) ?? [];
   if (!token || !devices.length) return [];
   const tokenFile = '.devices.token';
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
@@ -1063,7 +1101,7 @@ function devicesSection(workspace: string, conn: ConnectorConfig): string[] {
   const browsers = devices.filter(d => d.os === 'browser');
   const nasDev = devices.filter(d => d.os === 'nasbrowser');
   for (const d of devices.filter(d => d.os !== 'browser' && d.os !== 'nasbrowser')) out.push(`- "${d.name}" (${d.os === 'windows' ? 'Windows' : d.os === 'darwin' ? 'Mac' : d.os ?? '?'}, id ${d.id}) ${d.online ? 'online' : 'offline'}`);
-  if (browsers.length) out.push('Gekoppelde browsers (Chrome-extensie, geen computers; bedien je met tabs, read, screen, act en browser, zie onder):', ...browsers.map(d => `- "${d.name}" (Chrome-browser, id ${d.id}) ${d.online ? 'online' : 'offline'}`));
+  if (browsers.length) out.push('Gekoppelde browsers (Chrome-extensie, geen computers; bedien je met tabs, read, screen, act en browser, zie onder):', ...browsers.map(d => `- "${d.name}" (${d.kind === 'aio' ? 'AIO Dashboard' : 'Chrome-browser'}, id ${d.id}) ${d.online ? 'online' : 'offline'}`));
   if (nasDev.length) out.push('Browser op de server (geen computer, altijd online; bedien je met tabs, read, screen, act en browser, zie onder):', ...nasDev.map(d => `- "${d.name}" (${NAS_NAME}, id ${d.id}) online`));
   out.push('Een apparaat aanspreken met de id of de naam (url-encoded).');
   out.push('```bash');
@@ -1076,9 +1114,14 @@ function devicesSection(workspace: string, conn: ConnectorConfig): string[] {
   out.push('Get-Service | Where-Object Status -eq Running | Select-Object -First 5');
   out.push('EOF');
   out.push('# Antwoord: {"ok","exitCode","output","error","durationMs"}');
-  out.push('# Bestand ophalen (max 10 MB) en terugzetten');
+  out.push('# Klein bestand ophalen (max 10 MB) en terugzetten');
   out.push(`curl -s -H "$(DT)" -G --data-urlencode 'path=C:\\Users\\naam\\Desktop\\log.txt' http://127.0.0.1:4000/devices/claude/{id}/file -o log.txt`);
   out.push(`curl -s -X PUT -H "$(DT)" --data-binary @script.ps1 "http://127.0.0.1:4000/devices/claude/{id}/file?path=C%3A%5CTemp%5Cscript.ps1"   # pad url-encoded in de URL, geen -G (dan gaat de body in de querystring)`);
+  out.push('# Grote bestanden (tot vele GB) kopieren van apparaat naar apparaat: in blokken via de server, hervat na onderbreking, met SHA-256 en voortgang');
+  out.push(`curl -s -X POST -H "$(DT)" -H "Content-Type: application/json" http://127.0.0.1:4000/devices/claude/copy -d '{"from":"Office-PC","fromPath":"C:\\\\Data\\\\groot.iso","to":"Sam-Macbook","toPath":"C:\\\\Temp\\\\groot.iso","overwrite":false}'   # -> {"id","status",...}; apparaat = naam of id; "nas" mag alleen voor beheerders (pad op de server)`);
+  out.push(`curl -s -H "$(DT)" http://127.0.0.1:4000/devices/claude/transfers/{id}   # status: queued|uploading|downloading|done|failed|cancelled, percent, sizeBytes, uploadedBytes, downloadedBytes, error`);
+  out.push(`curl -s -H "$(DT)" http://127.0.0.1:4000/devices/claude/transfers   # laatste overdrachten; -X DELETE op /transfers/{id} annuleert en ruimt de tijdelijke opslag op`);
+  out.push('# Werkwijze: start met copy, vraag de status om de paar seconden op (sleep 5) tot done of failed en meld het resultaat. Alleen eigen apparaten. Agent 1.6.0 of nieuwer nodig voor grote bestanden; oudere agents kunnen tot 15 MB. Gebruik /file alleen voor kleine bestanden (max 10 MB).');
   out.push('```');
   out.push('Scherm (Windows): kijken en bedienen met muis en toetsenbord, zoals een mens. De gebruiker ziet dit live in het meekijkvenster met jouw oranje cursor.');
   out.push('```bash');
@@ -1261,6 +1304,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
   for (const conn of connectors.filter(c => c.type === 'github')) lines.push(...githubSection(workspace, conn));
   for (const conn of connectors.filter(c => c.type === 'focustrack')) lines.push(...focustrackSection(workspace, conn));
   for (const conn of connectors.filter(c => c.type === 'google-search-console')) lines.push(...gscSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'ninjaone')) lines.push(...ninjaoneSection(workspace, conn));
 
   // Microsoft 365 — a fresh Graph token per run (fetched in routes/stream.ts), read-only scopes
   for (const conn of connectors.filter(c => c.type === 'm365')) {
@@ -1362,6 +1406,13 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
 
   // Apparaten: the user's own Windows/Mac computers with the Claude Agent
   for (const conn of connectors.filter(c => c.type === 'devices')) lines.push(...devicesSection(workspace, conn));
+
+  // PowerShell 7 is always in the image
+  lines.push('## PowerShell');
+  lines.push('`pwsh` (PowerShell 7) is beschikbaar: `pwsh -NoLogo -NoProfile -File script.ps1` of `pwsh -NoLogo -NoProfile -Command \'...\'`. Langlopend: draai het op de achtergrond.');
+  lines.push('Modules: `Install-Module <naam> -Scope CurrentUser -Force` (blijft bewaard in je home), bijvoorbeeld Microsoft.Graph, ExchangeOnlineManagement, PnP.PowerShell. Interactief inloggen met device code (`Connect-MgGraph -UseDeviceCode`, `Connect-ExchangeOnline -Device`); elke aanroep is een nieuw proces, zet verbinden en werk in hetzelfde script.');
+  lines.push('Niet hier: Windows-only (Active Directory op een DC, register, WMI/CIM, BitLocker, MSOnline/AzureAD-modules). Die via een gekoppeld Windows-apparaat.');
+  lines.push('');
 
   // Python
   if (connectors.some(c => c.type === 'python')) {
@@ -1469,8 +1520,8 @@ export async function runTask(
     writeBuiltinSkill(home, 'claude-chat-backups', 'Back-ups van claude-chat (dagelijks 03:00): overzicht en terugzetten van database en config per datum. Gebruik bij backup, terugzetten, restore, ga terug naar.', ['# Backups', BACKUPS_TEXT]);
     for (const c of connectors) {
       if (c.type === 'devices') {
-        const devs = (c.config.devices as Array<{ name: string; os: string | null; online: boolean }> | undefined) ?? [];
-        const fmt = (d: { name: string; os: string | null; online: boolean }) => `"${d.name}" (${d.os === 'windows' ? 'Windows' : d.os === 'darwin' ? 'Mac' : d.os === 'browser' ? 'Chrome-browser' : d.os ?? '?'}) ${d.online ? 'online' : 'offline'}`;
+        const devs = (c.config.devices as Array<{ name: string; os: string | null; online: boolean; kind?: string }> | undefined) ?? [];
+        const fmt = (d: { name: string; os: string | null; online: boolean; kind?: string }) => `"${d.name}" (${d.os === 'windows' ? 'Windows' : d.os === 'darwin' ? 'Mac' : d.os === 'browser' ? (d.kind === 'aio' ? 'AIO Dashboard' : 'Chrome-browser') : d.os ?? '?'}) ${d.online ? 'online' : 'offline'}`;
         const list = devs.filter(d => d.os !== 'browser' && d.os !== 'nasbrowser').map(fmt).join(', ') || 'geen';
         const nasList = devs.filter(d => d.os === 'nasbrowser').map(d => `"${d.name}" (browser op de server, altijd online)`).join(', ');
         const browserList = devs.filter(d => d.os === 'browser').map(fmt).join(', ');
@@ -1496,6 +1547,11 @@ export async function runTask(
         extra.push(...skillBacked(home, gscSection(workspace, c),
           { name: 'google-search-console', description: 'Google Search Console: zoekwoorden, pagina\'s, kansen (veel vertoningen, lage CTR), periodes vergelijken en URL-inspectie voor SEO, alleen lezen. Gebruik bij seo, zoekwoorden, search console, google, vertoningen, ranking, indexatie.' },
           [`Zoekprestaties van de sites van de gebruiker via de Search Console API, alleen lezen, met token uit \`~/.google-sc-${alias}.token\` (of in de werkruimte). Voorbeelden (sites, query en pagina, kansen, vergelijken, URL-inspectie): skill google-search-console.`]));
+      } else if (c.type === 'ninjaone') {
+        const alias = c.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+        extra.push(...skillBacked(home, ninjaoneSection(workspace, c),
+          { name: 'ninjaone-api', description: 'NinjaOne (RMM/PSA) tickets: borden, tickets lezen, logboek, toewijzen aan een technicus en privé-opmerkingen plaatsen via de lokale proxy. Gebruik bij ninjaone, ticket, bord, technicus, toewijzen, opmerking.' },
+          [`NinjaOne via de lokale proxy http://127.0.0.1:4000/ninjaone/claude/v2/... met header x-ninjaone-token uit \`~/.ninjaone-${alias}.token\` (of in de werkruimte). Schrijven alleen als de opdracht of taak het toestaat; nooit een publieke opmerking. Endpoints en voorbeelden: skill ninjaone-api.`]));
       } else if (c.type === 'focustrack') {
         const alias = c.name.replace(/[^a-zA-Z0-9_-]/g, '_');
         const sec = focustrackSection(workspace, c);
@@ -1505,6 +1561,8 @@ export async function runTask(
             'Alle functies, voorbeelden en de FT()-shellfunctie: skill focustrack-api.']));
       }
     }
+    // the NinjaOne skill lives in the shared home: gone again for a run that may not use the connector
+    if (!connectors.some(c => c.type === 'ninjaone')) { try { rmSync(join(home, '.claude', 'skills', 'ninjaone-api'), { recursive: true, force: true }); } catch { /* ignore */ } }
     const lessonsConn = connectors.find(c => c.type === 'lessons');
     if (lessonsConn) {
       let base = 0;

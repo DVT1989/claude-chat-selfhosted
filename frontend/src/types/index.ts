@@ -63,7 +63,7 @@ export interface Message {
 export interface Connector {
   id: string;
   name: string;
-  type: 'git' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'github' | 'focustrack' | 'google-search-console';
+  type: 'git' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'github' | 'focustrack' | 'google-search-console' | 'ninjaone';
   config: Record<string, unknown>;
   is_active: boolean;
   test_status: 'ok' | 'error' | null;

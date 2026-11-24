@@ -19,6 +19,7 @@ import { projectsRouter } from './routes/projects';
 import { streamRouter, resumeQueues, resumeAfterRestart } from './routes/stream';
 import { ensureQueueSchema } from './services/messageQueue';
 import { ensureDeviceSchema } from './services/devices';
+import { ensureTransferSchema, startTransferSweeper } from './services/fileTransfers';
 import { devicesRouter, resumeDeviceTasks } from './routes/devices';
 import { ensureNasPasswordTables } from './services/nasPasswords';
 import { remoteRouter } from './routes/remote';
@@ -33,10 +34,12 @@ import { tasksRouter } from './routes/tasks';
 import { ensureTasksSchema, startTaskScheduler } from './services/tasks';
 import { assistantRouter } from './routes/assistant';
 import { insightsRouter } from './routes/insights';
+import { ninjaoneRouter } from './routes/ninjaone';
 import { ensureInsightsSchema } from './services/insights';
 import { ensureHistorySchema } from './services/history';
 import { ensureContextSchema } from './services/contextBudget';
 import { ensureLearningSchema, startLearning, cleanupAll } from './services/learning';
+import { resumeTrainings } from './services/agentTraining';
 import { ensureAgentsSchema } from './services/agents';
 import { ensureDelegationsSchema, startDelegations } from './services/delegations';
 import { ensureLessonsSchema } from './services/lessons';
@@ -209,6 +212,7 @@ app.use('/history', historyRouter);
 app.use('/tasks', tasksRouter);
 app.use('/assistant', assistantRouter);
 app.use('/insights', insightsRouter);
+app.use('/ninjaone', ninjaoneRouter);
 
 // ── Error handler ─────────────────────────────────────────────
 app.use(errorHandler);
@@ -303,6 +307,8 @@ async function start() {
     await ensureMessengerSchema();
     await ensureQueueSchema();
     await ensureDeviceSchema();
+    await ensureTransferSchema();
+    startTransferSweeper();
     await ensureLessonsSchema();
     await ensureAgentsSchema();
     await ensureAgentBotSchema(); // after agents: it references them
@@ -376,6 +382,7 @@ async function start() {
   void startAgentBots();
   void startWhatsApp();
   startLearning();
+  setTimeout(() => void resumeTrainings().catch((e) => console.error('[training] hervatten:', e)), 150_000).unref();
 
   // Memory cleanup (archive long unused facts, merge near-duplicates) once a day, after the backup
   cron.schedule('15 4 * * *', () => {

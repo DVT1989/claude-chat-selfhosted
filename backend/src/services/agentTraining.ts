@@ -16,12 +16,17 @@ import { runStructured, getAuthStatus } from './claudeCode';
 import { tryAcquire, lockReason, roomBelow } from './backgroundJobs';
 import { redact, hasSecret } from './learning';
 import { rankConversations } from './history';
+import { redis } from '../redis';
+
+// queued trainings sit in redis, so a backend restart resumes them (a run that was busy starts over)
+const QUEUE_KEY = 'train:queue';
 
 const MODEL = 'haiku';
-const MAX_CONVERSATIONS = 25;
+const MAX_CONVERSATIONS = 1000;   // in practice: every conversation that fits the agent's field
 const PER_CONVERSATION = 7_000;   // characters of one conversation
 const BATCH_MAX = 26_000;         // characters per Haiku call
 const KNOWLEDGE_MAX = 6_000;      // about 1500 tokens
+const MERGE_MAX = 60_000;         // characters of new points per merge call; more is merged in rounds
 
 export interface TrainStatus {
   state: 'geen' | 'wachten' | 'bezig' | 'klaar' | 'fout';
@@ -98,7 +103,7 @@ interface Ev { type?: string; text?: string; content?: string; agentName?: strin
 
 function clip(s: string, n: number): string { const t = s.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(); return t.length > n ? `${t.slice(0, n)} [...]` : t; }
 
-function renderAssistant(content: string): string {
+export function renderAssistant(content: string): string {
   if (!content.startsWith('[{')) return clip(content, 900);
   let evs: Ev[];
   try { evs = JSON.parse(content) as Ev[]; } catch { return clip(content, 900); }
@@ -206,13 +211,21 @@ async function train(userId: string, agentId: string, st: TrainStatus): Promise<
   await flush();
   if (!items.length && !a.knowledge) throw new Error('Geen bruikbare kennis gevonden');
 
-  await waitForRoom(userId, st);
-  const merged = await runStructured<{ knowledge: string }>(userId, {
-    system: MERGE_SYSTEM, schema: MERGE_SCHEMA, model: MODEL, timeoutMs: 180_000, action: 'training',
-    prompt: [`Agent: ${a.name} (${a.description})`, '',
-      a.knowledge ? `HUIDIGE KENNIS (behoud wat nog klopt):\n${a.knowledge}\n` : '',
-      'NIEUWE KENNISPUNTEN:', ...items].join('\n') });
-  const knowledge = finish(merged.knowledge ?? '');
+  // merge in rounds: each round folds a slice of the new points into the block of the round before
+  let knowledge = a.knowledge ?? '';
+  for (let i = 0; i < items.length || (i === 0 && !items.length);) {
+    const slice: string[] = [];
+    for (let size = 0; i < items.length && (size + items[i].length < MERGE_MAX || !slice.length); i++) { slice.push(items[i]); size += items[i].length + 1; }
+    await waitForRoom(userId, st);
+    const merged = await runStructured<{ knowledge: string }>(userId, {
+      system: MERGE_SYSTEM, schema: MERGE_SCHEMA, model: MODEL, timeoutMs: 180_000, action: 'training',
+      prompt: [`Agent: ${a.name} (${a.description})`, '',
+        knowledge ? `HUIDIGE KENNIS (behoud wat nog klopt):\n${knowledge}\n` : '',
+        'NIEUWE KENNISPUNTEN:', ...slice].join('\n') });
+    const next = finish(merged.knowledge ?? '');
+    if (next) knowledge = next;
+    if (!items.length) break;
+  }
   if (!knowledge) throw new Error('Samenvoegen gaf geen kennis');
   await saveKnowledge(userId, agentId, { knowledge, trained_at: new Date().toISOString(), trained_conversations: convs.length });
 }
@@ -257,6 +270,7 @@ export async function startTraining(userId: string, agentId: string): Promise<Tr
   const st: TrainStatus = { state: 'wachten', done: 0, total: 0, waiting: running ? 'een andere training loopt' : null, error: null };
   status.set(agentId, st);
   queue.push({ userId, agentId });
+  await redis.rpush(QUEUE_KEY, `${userId}:${agentId}`).catch(() => 0);
   void runQueue();
   return st;
 }
@@ -281,10 +295,21 @@ async function runQueue(): Promise<void> {
       } catch (err) {
         st.state = 'fout'; st.waiting = null; st.error = (err as Error).message.slice(0, 300);
         console.error(`[training] ${job.agentId.slice(0, 8)}:`, st.error);
-      } finally { release(); }
+      } finally { release(); await redis.lrem(QUEUE_KEY, 0, `${job.userId}:${job.agentId}`).catch(() => 0); }
       for (const q of queue) { const s = status.get(q.agentId); if (s) s.waiting = 'een andere training loopt'; }
     }
   } finally { running = false; }
+}
+
+/** After a restart: put the trainings that were queued or running back in the queue. */
+export async function resumeTrainings(): Promise<void> {
+  const jobs = [...new Set(await redis.lrange(QUEUE_KEY, 0, -1))];
+  await redis.del(QUEUE_KEY);
+  for (const j of jobs) {
+    const [userId, agentId] = j.split(':');
+    try { await startTraining(userId, agentId); } catch (err) { console.error(`[training] hervatten ${agentId?.slice(0, 8)}:`, (err as Error).message); }
+  }
+  if (jobs.length) console.log(`[training] ${jobs.length} training(en) hervat`);
 }
 
 /** for tests */

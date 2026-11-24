@@ -13,7 +13,7 @@ const KINDS: Array<[string, string]> = [
 ];
 
 type Peer = {
-  id: string; name: string; url: string; remote_name: string | null; direction: string | null; enabled: boolean; nightly: boolean;
+  id: string; name: string; url: string; remote_name: string | null; direction: string | null; enabled: boolean; nightly: boolean; all_users: boolean;
   kinds: Record<string, boolean>; status: string; status_message: string | null; last_sync_at: string | null;
   last_result: Record<string, { created: number; updated: number; conflicts: number; errors: number; pushed: number }> | null; open_conflicts: number;
 };
@@ -59,7 +59,7 @@ export default function InstallatiesPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [keyForm, setKeyForm] = useState({ name: '', direction: 'read' });
-  const [peerForm, setPeerForm] = useState({ name: '', url: '', apiKey: '' });
+  const [peerForm, setPeerForm] = useState({ name: '', url: '', apiKey: '', allUsers: false });
   const [open, setOpen] = useState<string | null>(null);
   const [selfName, setSelfName] = useState('');
 
@@ -164,6 +164,14 @@ export default function InstallatiesPage() {
                   <input type="checkbox" checked={p.nightly} onChange={(e) => run(p.id, () => api(`/peers/${p.id}`, 'PATCH', { nightly: e.target.checked }), 'Nachtelijke sync bijgewerkt')} />
                   Elke nacht
                 </label>
+                <label className="flex items-center gap-1.5 text-sm text-[var(--muted)] cursor-pointer">
+                  <input type="checkbox" checked={p.all_users} onChange={(e) => {
+                    const on = e.target.checked;
+                    if (on && !confirm(`Ook agents, skills, geheugen, taken, projecten en gesprekken van andere gebruikers synchroniseren met ${p.name}?`)) return;
+                    void run(p.id, () => api(`/peers/${p.id}`, 'PATCH', { allUsers: on }), on ? 'Alle gebruikers gaan mee' : 'Alleen jouw items gaan mee');
+                  }} />
+                  Ook andere gebruikers
+                </label>
               </div>
               {p.last_result && (
                 <div className="text-xs text-[var(--muted)] mt-2">
@@ -179,13 +187,17 @@ export default function InstallatiesPage() {
               )}
             </div>
           ))}
-          <form className={`${card} space-y-2`} onSubmit={(e) => { e.preventDefault(); void run('peer', async () => { await api('/peers', 'POST', peerForm); setPeerForm({ name: '', url: '', apiKey: '' }); }, 'Installatie gekoppeld'); }}>
+          <form className={`${card} space-y-2`} onSubmit={(e) => { e.preventDefault(); void run('peer', async () => { await api('/peers', 'POST', peerForm); setPeerForm({ name: '', url: '', apiKey: '', allUsers: false }); }, 'Installatie gekoppeld'); }}>
             <div className="text-sm text-[var(--text)]">Installatie koppelen</div>
             <div className="grid sm:grid-cols-3 gap-2">
               <input className={field} placeholder="Naam" value={peerForm.name} onChange={(e) => setPeerForm({ ...peerForm, name: e.target.value })} required />
               <input className={field} placeholder="URL, bijv. https://chat.voorbeeld.nl" value={peerForm.url} onChange={(e) => setPeerForm({ ...peerForm, url: e.target.value })} required />
               <input className={field} placeholder="Sleutel (fedk_…)" type="password" autoComplete="off" value={peerForm.apiKey} onChange={(e) => setPeerForm({ ...peerForm, apiKey: e.target.value })} required />
             </div>
+            <label className="flex items-start gap-2 text-sm text-[var(--text)] cursor-pointer">
+              <input type="checkbox" className="mt-1" checked={peerForm.allUsers} onChange={(e) => setPeerForm({ ...peerForm, allUsers: e.target.checked })} />
+              <span>Ook items van andere gebruikers synchroniseren<span className="block text-xs text-[var(--muted)]">Uit: alleen jouw eigen agents, skills, geheugen, taken, projecten en gesprekken. Lessen gaan altijd mee.</span></span>
+            </label>
             <button className={btn} disabled={busy === 'peer'}>{busy === 'peer' ? 'Koppelen…' : 'Koppelen'}</button>
           </form>
         </section>

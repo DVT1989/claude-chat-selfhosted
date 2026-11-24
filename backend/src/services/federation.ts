@@ -92,6 +92,7 @@ export async function ensureFederationSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       resolved_at TIMESTAMPTZ)`);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS federation_conflicts_open_idx ON federation_conflicts (install_id, kind, remote_id) WHERE status = 'open'`);
+  await query('ALTER TABLE federation_peers ADD COLUMN IF NOT EXISTS all_users BOOLEAN NOT NULL DEFAULT FALSE');
   if (!(await query('SELECT 1 FROM federation_self')).rowCount) {
     await query('INSERT INTO federation_self (name) VALUES ($1)', [process.env.FEDERATION_NAME || 'Deze installatie']);
   }
@@ -692,7 +693,7 @@ export async function resolveConflict(id: string, choice: 'local' | 'remote'): P
 
 export interface Peer {
   id: string; name: string; url: string; api_key_enc: string; remote_install_id: string | null; remote_name: string | null; direction: string | null;
-  enabled: boolean; nightly: boolean; kinds: Record<string, boolean>; cursors: Record<string, string>; push_cursors: Record<string, string>;
+  enabled: boolean; nightly: boolean; all_users: boolean; kinds: Record<string, boolean>; cursors: Record<string, string>; push_cursors: Record<string, string>;
   status: string; status_message: string | null; last_sync_at: string | null; last_result: Record<string, Record<string, number>> | null; created_by: string | null;
 }
 
@@ -705,7 +706,7 @@ export async function getPeer(idOrName: string): Promise<Peer> {
 
 export async function listPeers(): Promise<Array<Omit<Peer, 'api_key_enc'> & { open_conflicts: number }>> {
   const r = await query(
-    `SELECT p.id, p.name, p.url, p.remote_install_id, p.remote_name, p.direction, p.enabled, p.nightly, p.kinds, p.status, p.status_message,
+    `SELECT p.id, p.name, p.url, p.remote_install_id, p.remote_name, p.direction, p.enabled, p.nightly, p.all_users, p.kinds, p.status, p.status_message,
             p.last_sync_at, p.last_result, (SELECT count(*)::int FROM federation_conflicts c WHERE c.peer_id = p.id AND c.status = 'open') AS open_conflicts
      FROM federation_peers p ORDER BY p.created_at`);
   return r.rows as never;
@@ -734,10 +735,10 @@ async function peerBuffer(p: Peer, path: string): Promise<Buffer | null> {
   try { return Buffer.from(await (await peerRequest(p, path)).arrayBuffer()); } catch { return null; }
 }
 
-export async function createPeer(adminId: string, b: { name: string; url: string; apiKey: string }): Promise<string> {
+export async function createPeer(adminId: string, b: { name: string; url: string; apiKey: string; allUsers?: boolean }): Promise<string> {
   if (!/^https?:\/\//i.test(b.url)) throw new AppError(400, 'URL moet met http:// of https:// beginnen');
-  const r = await query<{ id: string }>('INSERT INTO federation_peers (name, url, api_key_enc, created_by) VALUES ($1,$2,$3,$4) RETURNING id',
-    [b.name.trim().slice(0, 80), b.url.trim(), encrypt(b.apiKey.trim()), adminId]);
+  const r = await query<{ id: string }>('INSERT INTO federation_peers (name, url, api_key_enc, created_by, all_users) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [b.name.trim().slice(0, 80), b.url.trim(), encrypt(b.apiKey.trim()), adminId, !!b.allUsers]);
   try { await testPeer(r.rows[0].id); } catch { /* status shows it */ }
   return r.rows[0].id;
 }
@@ -756,12 +757,16 @@ export async function testPeer(id: string): Promise<{ name: string; direction: s
   }
 }
 
-export async function updatePeer(id: string, b: { name?: string; url?: string; apiKey?: string; enabled?: boolean; nightly?: boolean; kinds?: Record<string, boolean> }): Promise<void> {
+export async function updatePeer(id: string, b: { name?: string; url?: string; apiKey?: string; enabled?: boolean; nightly?: boolean; allUsers?: boolean; kinds?: Record<string, boolean> }): Promise<void> {
   const p = await getPeer(id);
   const kindsNew = { ...p.kinds };
   for (const k of KINDS) if (b.kinds && typeof b.kinds[k] === 'boolean') kindsNew[k] = b.kinds[k];
   await query(`UPDATE federation_peers SET name = $2, url = $3, api_key_enc = $4, enabled = $5, nightly = $6, kinds = $7 WHERE id = $1`,
     [id, b.name?.trim().slice(0, 80) || p.name, b.url?.trim() || p.url, b.apiKey?.trim() ? encrypt(b.apiKey.trim()) : p.api_key_enc, b.enabled ?? p.enabled, b.nightly ?? p.nightly, JSON.stringify(kindsNew)]);
+  // widening the scope: start over so older items of other users come along too
+  if (typeof b.allUsers === 'boolean' && b.allUsers !== p.all_users) {
+    await query(`UPDATE federation_peers SET all_users = $2${b.allUsers ? ", cursors = '{}', push_cursors = '{}'" : ''} WHERE id = $1`, [id, b.allUsers]);
+  }
 }
 
 export async function deletePeer(id: string): Promise<void> {
@@ -794,11 +799,15 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
     const wanted = (opts.kinds?.length ? opts.kinds : KINDS.filter((k) => p.kinds[k])) as string[];
     const cursors = { ...p.cursors }; const pushCursors = { ...p.push_cursors };
     let failed = '';
+    // without all_users only the items of the admin who made the link go along (lessons are shared knowledge, always all)
+    const creatorEmail = p.all_users || !p.created_by ? undefined
+      : (await query<{ email: string }>('SELECT email FROM users WHERE id = $1', [p.created_by])).rows[0]?.email;
     for (const kind of KINDS.filter((k) => wanted.includes(k))) {
       const st = (result[kind] = newStat());
+      const scope = opts.owner ?? (kind === 'lessons' ? undefined : creatorEmail);
       let after = opts.owner ? null : parseCursor(cursors[kind]);
       for (let page = 0; page < 500; page++) {
-        const qs = `?limit=${kind === 'conversations' ? 10 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}${opts.owner ? `&owner=${encodeURIComponent(opts.owner)}` : ''}`;
+        const qs = `?limit=${kind === 'conversations' ? 10 : 50}${after ? `&after=${encodeURIComponent(`${after[0]}|${after[1]}`)}` : ''}${scope ? `&owner=${encodeURIComponent(scope)}` : ''}`;
         const data = await peerJson<{ items: Item[]; next: string | null }>(p, `/export/${kind}${qs}`);
         let stop = false;
         for (const item of data.items) {
@@ -814,7 +823,7 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
       }
       // two-way key: send what is new or changed here
       if ((opts.push ?? true) && p.direction === 'readwrite' && !failed) {
-        try { await pushKind(p, me, kind, st, pushCursors, opts.owner); } catch (e) { failed = `${KIND_LABEL[kind as KindName]} versturen: ${(e as Error).message}`; }
+        try { await pushKind(p, me, kind, st, pushCursors, scope, !!opts.owner); } catch (e) { failed = `${KIND_LABEL[kind as KindName]} versturen: ${(e as Error).message}`; }
       }
       if (failed) break;
     }
@@ -829,9 +838,9 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
   } finally { running.delete(p.id); }
 }
 
-async function pushKind(p: Peer, me: { id: string; name: string }, kind: string, st: Stat, cursors: Record<string, string>, owner?: string): Promise<void> {
+async function pushKind(p: Peer, me: { id: string; name: string }, kind: string, st: Stat, cursors: Record<string, string>, owner?: string, oneOff = false): Promise<void> {
   const k = kindOf(kind);
-  let after = owner ? null : parseCursor(cursors[kind]);
+  let after = oneOff ? null : parseCursor(cursors[kind]);
   for (let page = 0; page < 500; page++) {
     const raw = await k.list(after, kind === 'conversations' ? 5 : 40, owner);
     if (!raw.length) break;
@@ -866,7 +875,7 @@ async function pushKind(p: Peer, me: { id: string; name: string }, kind: string,
       if (r.local_id && r.result !== 'conflict') await setOrigin(p.remote_install_id as string, kind, r.local_id, item.id, item.hash, true);
     }
     after = parseCursor(mkCursor(raw[raw.length - 1]));
-    if (!owner) cursors[kind] = mkCursor(raw[raw.length - 1]);
+    if (!oneOff) cursors[kind] = mkCursor(raw[raw.length - 1]);
     if (raw.length < (kind === 'conversations' ? 5 : 40)) break;
   }
 }

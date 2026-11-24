@@ -136,7 +136,7 @@ admin.delete('/keys/:id', async (req, res, next) => {
 admin.get('/peers', async (_req, res, next) => { try { res.json({ peers: await fed.listPeers() }); } catch (e) { next(e); } });
 admin.post('/peers', async (req, res, next) => {
   try {
-    const b = z.object({ name: z.string().min(1).max(80), url: z.string().min(8).max(300), apiKey: z.string().min(10).max(200) }).parse(req.body);
+    const b = z.object({ name: z.string().min(1).max(80), url: z.string().min(8).max(300), apiKey: z.string().min(10).max(200), allUsers: z.boolean().optional() }).parse(req.body);
     const id = await fed.createPeer(req.user!.userId, b);
     await auditLog(req.user!.userId, 'federation.peer.create', 'federation_peer', id, req.ip ?? '');
     res.status(201).json({ id });
@@ -145,7 +145,7 @@ admin.post('/peers', async (req, res, next) => {
 admin.patch('/peers/:id', async (req, res, next) => {
   try {
     const b = z.object({ name: z.string().max(80).optional(), url: z.string().max(300).optional(), apiKey: z.string().max(200).optional(),
-      enabled: z.boolean().optional(), nightly: z.boolean().optional(), kinds: z.record(z.string(), z.boolean()).optional() }).parse(req.body);
+      enabled: z.boolean().optional(), nightly: z.boolean().optional(), allUsers: z.boolean().optional(), kinds: z.record(z.string(), z.boolean()).optional() }).parse(req.body);
     const p = await fed.getPeer(String(req.params.id));
     await fed.updatePeer(p.id, b);
     res.json({ ok: true });

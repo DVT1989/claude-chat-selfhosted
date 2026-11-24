@@ -478,6 +478,9 @@ export async function exchangeOAuthCode(userId: string, rawCode: string): Promis
   // Platform shows "code#state". State is MANDATORY — without it we cannot bind the inbound code to the originating PKCE flow,
   // which is exactly the CSRF protection state is there to provide.
   const hashIdx = rawCode.indexOf('#');
+  if (hashIdx === -1 && /^\s*\d{4,8}\s*$/.test(rawCode)) {
+    throw new AppError(400, 'Dit is de inlogcode uit je mail: vul die in op claude.ai. Plak hier de lange code met # die je na Authorize ziet.');
+  }
   if (hashIdx === -1) {
     throw new AppError(400, 'OAuth state ontbreekt — start opnieuw');
   }

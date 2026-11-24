@@ -172,8 +172,8 @@ export default function ClaudeCodeSettings() {
               {/* Step 1 */}
               <div className="flex gap-3">
                 <span className="shrink-0 w-6 h-6 rounded-full bg-(--accent-strong) text-white text-xs flex items-center justify-center font-medium">1</span>
-                <div className="flex-1 space-y-2">
-                  <p className="text-sm text-(--text)">
+                <div className="flex-1 min-w-0 space-y-2">
+                  <p className="text-sm text-(--text) break-words">
                     Open de link en log in met je claude.ai account.
                   </p>
                   <a
@@ -181,7 +181,7 @@ export default function ClaudeCodeSettings() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs bg-(--accent-strong) hover:brightness-110
-                               text-white px-3 py-1.5 rounded-lg transition-colors"
+                               text-white px-3 py-1.5 min-h-10 sm:min-h-0 rounded-lg transition-colors"
                   >
                     Inloggen bij Claude ↗
                   </a>
@@ -191,25 +191,26 @@ export default function ClaudeCodeSettings() {
               {/* Step 2 */}
               <div className="flex gap-3">
                 <span className="shrink-0 w-6 h-6 rounded-full bg-(--border) text-(--muted) text-xs flex items-center justify-center font-medium">2</span>
-                <div className="flex-1 space-y-2">
-                  <p className="text-sm text-(--text)">
-                    Kopieer de code die je na het inloggen ziet en plak hem hieronder.
+                <div className="flex-1 min-w-0 space-y-2">
+                  <p className="text-sm text-(--text) break-words">
+                    Klik na het inloggen op Authorize, kopieer de lange code (met #) en plak hem hieronder. Niet de cijfercode uit je mail.
                   </p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <input
                       type="text"
                       value={manualCode}
                       onChange={(e) => setManualCode(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitCode(); }}
                       placeholder="Plak de code hier…"
-                      className="flex-1 bg-(--bg) border border-(--border) rounded-lg px-3 py-2
-                                 text-(--text) text-sm font-mono focus:outline-none focus:border-(--accent)"
+                      autoComplete="off" autoCapitalize="none" spellCheck={false}
+                      className="w-full min-w-0 sm:flex-1 bg-(--bg) border border-(--border) rounded-lg px-3 py-2.5 sm:py-2
+                                 text-(--text) text-base sm:text-sm font-mono focus:outline-none focus:border-(--accent)"
                     />
                     <button
                       onClick={handleSubmitCode}
                       disabled={submitting || !manualCode.trim()}
                       className="bg-(--accent-strong) hover:brightness-110 disabled:opacity-50 text-white
-                                 text-sm px-4 py-2 rounded-lg transition-colors shrink-0">
+                                 text-sm px-4 py-2 rounded-lg transition-colors w-full sm:w-auto sm:shrink-0 min-h-11 sm:min-h-0">
                       {submitting ? 'Bezig…' : 'Bevestigen'}
                     </button>
                   </div>
@@ -227,7 +228,7 @@ export default function ClaudeCodeSettings() {
           {/* Retry button when auth is in progress */}
           {authUrl && (
             <button onClick={handleStart} disabled={starting}
-              className="text-xs text-(--muted) hover:text-(--text) transition-colors">
+              className="text-xs text-(--muted) hover:text-(--text) transition-colors py-2 sm:py-0">
               ↺ Opnieuw beginnen
             </button>
           )}

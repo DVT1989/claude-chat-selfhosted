@@ -176,6 +176,9 @@ export default function ClaudeCodeSettings() {
                   <p className="text-sm text-(--text) break-words">
                     Open de link en log in met je claude.ai account.
                   </p>
+                  <p className="text-xs text-(--muted) break-words">
+                    Stuurt Claude je een mail met een code of link? Gebruik die alleen op de pagina van claude.ai, niet hier.
+                  </p>
                   <a
                     href={authUrl}
                     target="_blank"
@@ -193,7 +196,7 @@ export default function ClaudeCodeSettings() {
                 <span className="shrink-0 w-6 h-6 rounded-full bg-(--border) text-(--muted) text-xs flex items-center justify-center font-medium">2</span>
                 <div className="flex-1 min-w-0 space-y-2">
                   <p className="text-sm text-(--text) break-words">
-                    Klik na het inloggen op Authorize, kopieer de lange code (met #) en plak hem hieronder. Niet de cijfercode uit je mail.
+                    Klik daarna op claude.ai op Authorize. Je krijgt dan een lange code met een # erin: kopieer die en plak hem hieronder.
                   </p>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <input
@@ -201,7 +204,7 @@ export default function ClaudeCodeSettings() {
                       value={manualCode}
                       onChange={(e) => setManualCode(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitCode(); }}
-                      placeholder="Plak de code hier…"
+                      placeholder="Lange code met #…"
                       autoComplete="off" autoCapitalize="none" spellCheck={false}
                       className="w-full min-w-0 sm:flex-1 bg-(--bg) border border-(--border) rounded-lg px-3 py-2.5 sm:py-2
                                  text-(--text) text-base sm:text-sm font-mono focus:outline-none focus:border-(--accent)"

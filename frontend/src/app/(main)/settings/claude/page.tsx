@@ -177,7 +177,7 @@ export default function ClaudeCodeSettings() {
                     Open de link en log in met je claude.ai account.
                   </p>
                   <p className="text-xs text-(--muted) break-words">
-                    Stuurt Claude je een mail met een code of link? Gebruik die alleen op de pagina van claude.ai, niet hier.
+                    Krijg je een mail van Claude? Open de link daarin en vul de verificatiecode in op het claude.ai-tabblad dat je net opende, niet hier. Kies niet 'Log in plaats daarvan hier in'.
                   </p>
                   <a
                     href={authUrl}

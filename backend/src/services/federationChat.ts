@@ -99,8 +99,8 @@ export async function ask(userId: string, peerName: string, b: { question: strin
   const me = await fed.selfInfo();
   const row = (await query<{ id: string }>(
     `INSERT INTO federation_consults (role, peer_id, install_id, install_name, topic, round, reason, local_conv, user_id, question, status)
-     VALUES ('ask',$1,$2,$3,$4,$5,$6,$4,$7,$8,'pending') RETURNING id`,
-    [p.id, remoteId, p.remote_name || p.name, conv.id, round, b.reason ?? null, userId, question])).rows[0];
+     VALUES ('ask',$1,$2,$3,$4::text,$5,$6,$9::uuid,$7,$8,'pending') RETURNING id`,
+    [p.id, remoteId, p.remote_name || p.name, conv.id, round, b.reason ?? null, userId, question, conv.id])).rows[0];
   waiting.add(row.id);
   try {
     const r = await fed.peerJson<{ id: string }>(p, '/consult/ask', {

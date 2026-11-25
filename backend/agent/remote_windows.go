@@ -49,7 +49,7 @@ var (
 const remoteSupported = true
 
 // startRemote launches the desktop helper as SYSTEM in the active console session and returns at once.
-func startRemote(session, key string) error {
+func startRemote(server, session, key string) error {
 	resetUserCursors() // a previous session that did not finish cleanly
 	sid := windows.WTSGetActiveConsoleSessionId()
 	if sid == 0xFFFFFFFF {
@@ -72,7 +72,7 @@ func startRemote(session, key string) error {
 	if err != nil {
 		return err
 	}
-	cmdline, err := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{exe, "desktop", "--session", session, "--key", key}))
+	cmdline, err := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{exe, "desktop", "--session", session, "--key", key, "--server", server}))
 	if err != nil {
 		return err
 	}

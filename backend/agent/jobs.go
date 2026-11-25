@@ -125,7 +125,7 @@ func handleJob(ctx context.Context, cfg *Config, j Job) {
 		}
 		r.OK, r.Output = true, "update gestart; de agent herstart over enkele seconden"
 	case "remote":
-		if err := startRemote(j.Session, j.Key); err != nil {
+		if err := startRemote(cfg.Server, j.Session, j.Key); err != nil {
 			r.Error = err.Error()
 			return
 		}

@@ -15,22 +15,30 @@
   .upd button { margin-top: 6px; }
   @keyframes in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .upd { animation: none; } }
+  .ln { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(156,163,175,.25); animation: in .2s ease-out; }
+  .ln .dot { width: 7px; height: 7px; border-radius: 50%; background: #9ca3af; flex: none; transition: background .2s; }
+  .ln .dot.on { background: #16a34a; }
+  .ln .host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ln button { margin: 0; padding: 3px 8px; font-size: 11px; }
+  @media (prefers-reduced-motion: reduce) { .ln { animation: none; } }
   [hidden] { display: none !important; }
 </style></head>
 <body>
   <h1>Claude Chat Browser</h1>
   <div id="linked" hidden>
     <div class="st" id="status"></div>
+    <div id="links"></div>
     <div class="hint">Zolang Claude een tabblad bedient, toont de knop "AI" en zie je de Chrome-balk "debugt deze browser". Interne pagina's (chrome://) worden nooit bediend.</div>
     <div id="upd" class="upd" hidden><span id="updText"></span><button id="updBtn">Update downloaden</button>
       <div class="hint">Pak de zip uit over de huidige map en klik in chrome://extensions op vernieuwen. Laad je toch een nieuwe map, dan koppelt hij zichzelf opnieuw.</div></div>
-    <button id="pause">Claude pauzeren</button><button class="ghost" id="unlink">Ontkoppelen</button>
+    <button id="pause">Claude pauzeren</button><button class="ghost" id="add">Server toevoegen</button>
   </div>
   <div id="unlinked" hidden>
     <label for="server">Adres van Claude Chat</label><input id="server" placeholder="https://...">
     <label for="code">Koppelcode (Instellingen, Koppelingen)</label><input id="code" placeholder="XXXX-XXXX" autocomplete="off">
     <label for="name">Naam van deze browser</label><input id="name" value="Chrome">
-    <button id="pair">Koppelen</button>
+    <button id="pair">Koppelen</button><button class="ghost" id="cancel" hidden>Annuleren</button>
+    <div class="hint" id="addHint" hidden>Koppel deze browser ook met een andere Claude Chat-installatie. De bestaande koppelingen blijven.</div>
   </div>
   <div class="err" id="err" hidden></div>
   <script src="popup.js"></script>

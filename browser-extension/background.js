@@ -13,10 +13,26 @@ const PERM_KEEP_MS = 90000;   // toestemming voor een tabblad waar de gebruiker 
 const NEE_MS = 60000;         // na Niet nu of Stop niet opnieuw vragen
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Koppelingen: links = [{ server, apiBase, token, deviceId, name }], een per Claude Chat-installatie
+// (bijv. twee servers). Oude opslag (een koppeling in losse velden) telt als lijst van een.
+// token/server/apiBase/name bovenaan = de eerste koppeling (voor de status en het zijpaneel).
+const LINK_KEYS = ['apiBase', 'server', 'token', 'deviceId', 'name'];
+const originOf = (u) => { try { return new URL(u).origin; } catch { return ''; } };
 const store = {
-  get: () => chrome.storage.local.get(['apiBase', 'server', 'token', 'deviceId', 'name', 'paused']),
+  get: async () => {
+    const r = await chrome.storage.local.get([...LINK_KEYS, 'links', 'paused', 'usedCode']);
+    const links = Array.isArray(r.links) ? r.links.filter((l) => l && l.token && l.apiBase)
+      : r.token && r.apiBase ? [{ server: r.server, apiBase: r.apiBase, token: r.token, deviceId: r.deviceId, name: r.name }] : [];
+    const first = links[0] || {};
+    return { ...r, links, apiBase: first.apiBase, server: first.server, token: first.token, deviceId: first.deviceId, name: first.name };
+  },
   set: (o) => chrome.storage.local.set(o),
+  setLinks: async (links) => {
+    await chrome.storage.local.set({ links });
+    await chrome.storage.local.remove(LINK_KEYS);
+  },
 };
+const linkFor = (links, server) => links.find((l) => originOf(l.server) === originOf(server));
 
 // ── Veiligheid: welke pagina's mag Claude bedienen ───────────
 function allowedUrl(u) {
@@ -414,74 +430,94 @@ async function runJob(job) {
 }
 
 // ── Verbinding met de server ─────────────────────────────────
-async function api(path, body, token, signal) {
-  const s = await store.get();
-  return fetch(`${s.apiBase}/devices/agent${path}`, {
+async function api(path, body, link, signal) {
+  return fetch(`${link.apiBase}/devices/agent${path}`, {
     method: 'POST', signal,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(link.token ? { Authorization: `Bearer ${link.token}` } : {}) },
     body: JSON.stringify(body ?? {}),
   });
 }
-async function postResult(token, r) {
+async function postResult(link, r) {
   for (let i = 0; i < 3; i++) {
-    try { const res = await api('/result', r, token); if (res.ok) return; } catch { /* opnieuw */ }
+    try { const res = await api('/result', r, link); if (res.ok) return; } catch { /* opnieuw */ }
     await sleep(500);
   }
 }
-async function handle(job, token) {
+async function handle(job, link) {
   const t0 = Date.now();
   try {
     const out = await runJob(job);
     const { dataB64, ...data } = out ?? {};
-    await postResult(token, { id: job.id, ok: true, data, ...(dataB64 ? { dataB64 } : {}), durationMs: Date.now() - t0 });
+    await postResult(link, { id: job.id, ok: true, data, ...(dataB64 ? { dataB64 } : {}), durationMs: Date.now() - t0 });
   } catch (e) {
-    await postResult(token, { id: job.id, ok: false, error: e instanceof UserError ? e.message : `Fout in de extensie: ${e.message || e}`, durationMs: Date.now() - t0 });
+    await postResult(link, { id: job.id, ok: false, error: e instanceof UserError ? e.message : `Fout in de extensie: ${e.message || e}`, durationMs: Date.now() - t0 });
   }
 }
 let chain = Promise.resolve();
-async function sendInventory(token) {
+async function sendInventory(link) {
   try {
     const ua = navigator.userAgent.match(/Chrome\/([\d.]+)/);
     const plat = (navigator.userAgentData && navigator.userAgentData.platform) || '';
-    const res = await api('/inventory', { inventory: { os: `Chrome ${ua ? ua[1] : ''}`.trim(), model: `Browser${plat ? ` op ${plat}` : ''}`, agentVersion: VERSION } }, token);
+    const res = await api('/inventory', { inventory: { os: `Chrome ${ua ? ua[1] : ''}`.trim(), model: `Browser${plat ? ` op ${plat}` : ''}`, agentVersion: VERSION } }, link);
     return res.ok;
   } catch { return false; /* volgende keer */ }
 }
 
-let looping = false;
+// Een poll-lus per gekoppelde server; jobs van alle servers gaan na elkaar (een browser, een bediening tegelijk).
+const looping = new Set();
+const onlineBy = new Map();
+function setOnline(server, v) {
+  if (v) onlineBy.set(server, true); else onlineBy.delete(server);
+  const any = onlineBy.size > 0;
+  if (any !== online) { online = any; void paintStatus(); }
+}
 async function loop() {
-  if (looping) return;
-  looping = true;
+  const { links } = await store.get();
+  for (const l of links) void loopFor(l.server);
+}
+async function loopFor(server) {
+  const key = originOf(server);
+  if (looping.has(key)) return;
+  looping.add(key);
   let fails = 0;
   try {
     // De long-poll antwoordt pas na tot ~25 s; meteen een korte aanvraag zodat de status direct 'gekoppeld' toont.
-    const s0 = await store.get();
-    if (s0.token && s0.apiBase && await sendInventory(s0.token) && !online) { online = true; void paintStatus(); }
+    const l0 = linkFor((await store.get()).links, server);
+    if (l0 && await sendInventory(l0)) setOnline(key, true);
     for (;;) {
-      const s = await store.get();
-      if (!s.token || !s.apiBase) break;
+      const l = linkFor((await store.get()).links, server);
+      if (!l) break;
       try {
-        const res = await api('/poll', { version: VERSION }, s.token);
-        if (res.status === 401) { await unlink(); break; }
+        const res = await api('/poll', { version: VERSION }, l);
+        if (res.status === 401) {
+          // alleen opgeven als de koppeling niet net is vernieuwd
+          const now = linkFor((await store.get()).links, server);
+          if (now && now.token === l.token) await unlink(server);
+          break;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const j = await res.json();
-        if (!online || fails) { online = true; void paintStatus(); }
+        setOnline(key, true);
         fails = 0;
-        for (const job of j.jobs ?? []) chain = chain.then(() => handle(job, s.token));
+        for (const job of j.jobs ?? []) chain = chain.then(() => handle(job, l));
       } catch {
         fails++;
-        if (online) { online = false; void paintStatus(); }
+        setOnline(key, false);
         await sleep(Math.min(30000, 1500 * fails));
       }
     }
-  } finally { looping = false; }
+  } finally { looping.delete(key); setOnline(key, false); }
 }
 
-async function unlink() {
-  await detachAll();
-  online = false;
-  await chrome.storage.local.remove(['token', 'deviceId', 'apiBase', 'name']);
-  await chrome.scripting.unregisterContentScripts({ ids: ['claude-page'] }).catch(() => {});
+// unlink(server): alleen die koppeling; unlink(): alle koppelingen.
+async function unlink(server) {
+  const { links } = await store.get();
+  const keep = server ? links.filter((l) => originOf(l.server) !== originOf(server)) : [];
+  if (!keep.length) await detachAll();
+  await store.setLinks(keep);
+  if (server) onlineBy.delete(originOf(server)); else onlineBy.clear();
+  online = onlineBy.size > 0;
+  await registerPageScript();
   await paintStatus();
 }
 
@@ -499,9 +535,15 @@ async function pair(server, code, name) {
     if (!ct.includes('json')) { last = `HTTP ${res.status}`; continue; }
     const j = await res.json().catch(() => ({}));
     if (!res.ok) fail(j.error || `Koppelen mislukt (HTTP ${res.status})`);
-    await store.set({ apiBase: base, server, token: j.token, deviceId: j.deviceId, name: j.name, paused: false });
-    void registerPageScript(server);
-    void loop();
+    // zelfde server: koppeling vervangen; andere server: erbij (eerdere koppelingen blijven)
+    const { links } = await store.get();
+    const link = { server, apiBase: base, token: j.token, deviceId: j.deviceId, name: j.name };
+    const i = links.findIndex((l) => originOf(l.server) === originOf(server));
+    if (i >= 0) links[i] = link; else links.push(link);
+    await store.setLinks(links);
+    await store.set({ paused: false });
+    void registerPageScript();
+    void loopFor(server);
     return { name: j.name, deviceId: j.deviceId };
   }
   fail(`Server antwoordt niet als Claude Chat (${last})`);
@@ -531,7 +573,7 @@ function runPendingPair() {
   })().finally(() => { pendingRun = null; });
   return pendingRun;
 }
-chrome.permissions.onAdded.addListener(() => { void runPendingPair(); });
+chrome.permissions.onAdded.addListener(() => { void runPendingPair(); void registerPageScript(); void loop(); });
 
 // ── Zijpaneel (sidepanel.html) ────────────────────────────────
 // Het paneel toont het gesprek (eigen lichte weergave) en de statusbalk "Claude bedient deze tab".
@@ -559,15 +601,21 @@ function panelOpen(msg, sender) {
   const saved = chrome.storage.session.set({ panelConv: conv, panelAt: Date.now() });
   return Promise.all([opened, saved]).then(() => ({ ok: true }));
 }
-async function registerPageScript(server) {
+// Paginascript (zijpaneelknop) op de app van elke gekoppelde server waarvoor toestemming is.
+async function registerPageScript() {
   try {
-    const origin = new URL(server).origin + '/*';
-    if (!(await chrome.permissions.contains({ origins: [origin] }))) return;
-    const def = { id: 'claude-page', matches: [origin], js: ['content.js'], runAt: 'document_start', persistAcrossSessions: true };
+    const { links } = await store.get();
+    const origins = [];
+    for (const l of links) {
+      const o = originOf(l.server) + '/*';
+      if (originOf(l.server) && !origins.includes(o) && await chrome.permissions.contains({ origins: [o] })) origins.push(o);
+    }
     const have = await chrome.scripting.getRegisteredContentScripts({ ids: ['claude-page'] }).catch(() => []);
+    if (!origins.length) { if (have.length) await chrome.scripting.unregisterContentScripts({ ids: ['claude-page'] }).catch(() => {}); return; }
+    const def = { id: 'claude-page', matches: origins, js: ['content.js'], runAt: 'document_start', persistAcrossSessions: true };
     if (have.length) await chrome.scripting.updateContentScripts([def]); else await chrome.scripting.registerContentScripts([def]);
     // al open staande tabbladen van de app krijgen het script ook (anders pas na verversen)
-    const tabs = await chrome.tabs.query({ url: origin }).catch(() => []);
+    const tabs = await chrome.tabs.query({ url: origins }).catch(() => []);
     for (const t of tabs) await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['content.js'] }).catch(() => {});
   } catch { /* zonder paginascript geen zijpaneelknop in de app, de rest werkt */ }
 }
@@ -580,12 +628,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     try { opened = panelOpen(msg, _sender); } catch (e) { reply({ error: e.message || String(e) }); return false; }
     (async () => {
       const s = await store.get();
-      let ok = false; try { ok = !!s.server && new URL(_sender.tab.url).origin === new URL(s.server).origin; } catch { /* */ }
-      if (!ok || !s.token) {
+      const l = linkFor(s.links, _sender.tab.url || '');
+      if (!l) {
         await chrome.sidePanel.setOptions({ tabId: _sender.tab.id, enabled: false }).catch(() => {});
         await chrome.storage.session.remove(['panelConv']).catch(() => {});
         fail('Deze pagina mag het zijpaneel niet openen');
       }
+      await chrome.storage.session.set({ panelServer: l.server }).catch(() => {});
       return opened;
     })().then(reply, (e) => reply({ error: e.message || String(e) }));
     return true;
@@ -593,17 +642,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   (async () => {
     if (_sender.tab) return { error: 'niet toegestaan' };
     if (msg?.type === 'panel-state') return undefined; // eigen broadcast
-    if (msg?.type === 'panel-get') return { state: await panelState(), ...(await store.get().then((s) => ({ apiBase: s.apiBase, server: s.server, name: s.name }))), ...(await chrome.storage.session.get(['panelConv'])) };
+    if (msg?.type === 'panel-get') {
+      const s = await store.get();
+      const { panelServer, panelConv } = await chrome.storage.session.get(['panelServer', 'panelConv']);
+      const l = linkFor(s.links, panelServer || '') || s.links[0] || {};
+      return { state: await panelState(), apiBase: l.apiBase, server: l.server, name: l.name, panelConv };
+    }
     if (msg?.type === 'panel-stop') { stopTab(Number(msg.tabId)); return { ok: true }; }
     if (msg?.type === 'panel-ask') { answerAsk(Number(msg.tabId), String(msg.nonce), !!msg.ja); return { ok: true }; }
     if (msg?.type === 'pair') return pair(msg.server, msg.code, msg.name);
     if (msg?.type === 'pair-pending') return runPendingPair();
-    if (msg?.type === 'state') { const s = await store.get(); return { linked: !!s.token, name: s.name, server: s.server, paused: !!s.paused, online, acting: attached.size > 0 }; }
+    if (msg?.type === 'state') {
+      const s = await store.get();
+      const links = [];
+      for (const l of s.links) {
+        const perm = await chrome.permissions.contains({ origins: [originOf(l.server) + '/*'] }).catch(() => false);
+        links.push({ server: l.server, apiBase: l.apiBase, name: l.name, online: onlineBy.has(originOf(l.server)), perm });
+      }
+      return { linked: links.length > 0, links, name: s.name, server: s.server, paused: !!s.paused, online, acting: attached.size > 0 };
+    }
+    if (msg?.type === 'relink') { await registerPageScript(); void loop(); return { ok: true }; }
     if (msg?.type === 'pause') { await store.set({ paused: !!msg.paused }); if (msg.paused) await detachAll(); await paintStatus(); return { ok: true }; }
     if (msg?.type === 'unlink') {
+      // msg.server: alleen die koppeling, anders alle
       const s = await store.get();
-      if (s.token) await api('/unenroll', {}, s.token).catch(() => {});
-      await unlink();
+      for (const l of s.links) if (!msg.server || originOf(l.server) === originOf(msg.server)) await api('/unenroll', {}, l).catch(() => {});
+      await unlink(msg.server || undefined);
       return { ok: true };
     }
     return { error: 'onbekend bericht' };
@@ -622,10 +686,10 @@ async function autoPair() {
   autoPairing = true;
   try {
     const s = await store.get();
-    if (s.token) return;
     let conf = {};
     try { conf = await (await fetch(chrome.runtime.getURL('config.json'))).json(); } catch { return; }
     if (!conf.server || !conf.code || conf.code === s.usedCode) return;
+    if (linkFor(s.links, conf.server)) return; // al gekoppeld met deze server (andere servers mogen erbij)
     await store.set({ usedCode: conf.code });
     const origin = new URL(conf.server).origin + '/*';
     if (!(await chrome.permissions.contains({ origins: [origin] }))) return; // zonder toestemming koppelt de popup
@@ -639,8 +703,10 @@ async function boot() {
   for (const t of targets) if (t.attached && t.tabId !== undefined) await chrome.debugger.detach({ tabId: t.tabId }).catch(() => {});
   await paintStatus();
   const st = await store.get();
-  if (st.token && st.server) void registerPageScript(st.server);
-  else await autoPair();
+  // oude opslag (een koppeling) eenmalig omzetten naar de lijst
+  if (st.links.length && !(await chrome.storage.local.get('links')).links) await store.setLinks(st.links);
+  if (st.links.length) void registerPageScript();
+  await autoPair();
   void loop();
 }
 chrome.runtime.onStartup.addListener(boot);

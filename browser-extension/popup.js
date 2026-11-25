@@ -2,15 +2,38 @@ const $ = (id) => document.getElementById(id);
 const msg = (m) => chrome.runtime.sendMessage(m);
 const err = (t) => { $('err').textContent = t || ''; $('err').hidden = !t; };
 
+let adding = false;
+const hostOf = (u) => { try { return new URL(u).host; } catch { return u || ''; } };
 async function render() {
   const s = await msg({ type: 'state' });
-  $('linked').hidden = !s.linked;
-  $('unlinked').hidden = s.linked;
-  if (s.linked) {
-    $('status').textContent = s.paused ? `${s.name}: gepauzeerd, Claude mag niets bedienen` : s.acting ? `${s.name}: Claude bedient nu een tabblad` : s.online ? `${s.name}: gekoppeld` : `${s.name}: geen verbinding met de server`;
+  const form = !s.linked || adding;
+  $('linked').hidden = form;
+  $('unlinked').hidden = !form;
+  $('cancel').hidden = !(s.linked && adding);
+  $('addHint').hidden = !(s.linked && adding);
+  if (!form) {
+    const n = s.links.length;
+    $('status').textContent = s.paused ? `${s.name}: gepauzeerd, Claude mag niets bedienen` : s.acting ? `${s.name}: Claude bedient nu een tabblad` : s.online ? `${s.name}: gekoppeld${n > 1 ? ` met ${n} servers` : ''}` : `${s.name}: geen verbinding met de server`;
     $('pause').textContent = s.paused ? 'Claude weer toestaan' : 'Claude pauzeren';
     $('pause').dataset.paused = s.paused ? '1' : '';
-    void checkUpdate();
+    const box = $('links');
+    box.textContent = '';
+    for (const l of s.links) {
+      const row = document.createElement('div'); row.className = 'ln';
+      const dot = document.createElement('span'); dot.className = 'dot' + (l.online ? ' on' : ''); dot.title = l.online ? 'Verbonden' : 'Geen verbinding';
+      const host = document.createElement('span'); host.className = 'host'; host.textContent = hostOf(l.server); host.title = `${l.server} (${l.name})`;
+      row.append(dot, host);
+      if (!l.perm) {
+        const p = document.createElement('button'); p.textContent = 'Toestaan'; p.title = 'Chrome-toestemming voor dit adres';
+        p.onclick = async () => { const o = new URL(l.server).origin + '/*'; if (await chrome.permissions.request({ origins: [o] }).catch(() => false)) { await msg({ type: 'relink' }); await render(); } };
+        row.append(p);
+      }
+      const u = document.createElement('button'); u.className = 'ghost'; u.textContent = 'Ontkoppelen';
+      u.onclick = async () => { await msg({ type: 'unlink', server: l.server }); await render(); };
+      row.append(u);
+      box.append(row);
+    }
+    void checkUpdate(s.links[0]);
   } else {
     const { pairForm: f, pairError } = await chrome.storage.session.get(['pairForm', 'pairError']);
     if (f) { $('server').value = f.server || ''; $('code').value = f.code || ''; $('name').value = f.name || 'Chrome'; }
@@ -21,6 +44,8 @@ async function render() {
   }
 }
 
+$('add').onclick = async () => { adding = true; err(''); $('server').value = ''; $('code').value = ''; await render(); };
+$('cancel').onclick = async () => { adding = false; err(''); await chrome.storage.session.remove('pairForm'); await render(); };
 $('pair').onclick = async () => {
   err('');
   const server = $('server').value.trim().replace(/\/+$/, '');
@@ -41,6 +66,7 @@ $('pair').onclick = async () => {
   }
   if (r?.error) { await chrome.storage.session.remove('pairError'); return err(r.error); }
   await chrome.storage.session.remove('pairForm');
+  adding = false;
   await render();
 };
 // ingevulde velden bewaren, zodat ze er nog staan als de popup tussendoor sluit
@@ -49,8 +75,8 @@ for (const id of ['server', 'code', 'name']) $(id).addEventListener('input', () 
 });
 // Nieuwere versie op de server? Dan een downloadknop. De zip bevat een verse koppelcode en de huidige naam.
 const newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
-async function checkUpdate() {
-  const { apiBase } = await chrome.storage.local.get(['apiBase']);
+async function checkUpdate(link) {
+  const apiBase = link?.apiBase;
   if (!apiBase) return;
   try {
     const { version } = await (await fetch(`${apiBase}/devices/download/browser-extension/version`, { cache: 'no-store' })).json();
@@ -60,7 +86,8 @@ async function checkUpdate() {
 }
 $('updBtn').onclick = async () => {
   err('');
-  const { apiBase, token } = await chrome.storage.local.get(['apiBase', 'token']);
+  const { links } = await chrome.storage.local.get(['links']);
+  const { apiBase, token } = (links && links[0]) || await chrome.storage.local.get(['apiBase', 'token']);
   try {
     const r = await fetch(`${apiBase}/devices/agent/browser-extension.zip`, { headers: { Authorization: `Bearer ${token}` } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -70,5 +97,4 @@ $('updBtn').onclick = async () => {
   } catch (e) { err(`Downloaden mislukt: ${e.message || e}`); }
 };
 $('pause').onclick = async () => { await msg({ type: 'pause', paused: !$('pause').dataset.paused }); await render(); };
-$('unlink').onclick = async () => { await msg({ type: 'unlink' }); await render(); };
 void render();

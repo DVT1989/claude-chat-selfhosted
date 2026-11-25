@@ -118,14 +118,22 @@ devicesRouter.get('/download/windows.ps1', (req: Request, res: Response) => {
   }
   $tmp = Join-Path $env:TEMP ('ClaudeAgentSetup-' + [guid]::NewGuid().ToString('N') + '.exe')
   try {
-    Write-Host 'Installer downloaden...'
-    Invoke-WebRequest -UseBasicParsing -Uri "$Server/api/devices/download/windows" -OutFile $tmp
-    Write-Host 'Installeren...'
-    $p = Start-Process -FilePath $tmp -ArgumentList '/S' -Wait -PassThru
-    if ($p.ExitCode -ne 0) { throw "Installer stopte met code $($p.ExitCode)" }
-    # a code means: pair with this server, also when an old config.json (other server or removed device) exists
+    # an agent that is already as new as this server's version (for example paired with another installation) is kept
+    $latest = '${latestAgent() ?? ''}'
+    $install = $true
+    if ((Test-Path $exe) -and $latest) {
+      try { if ([version](& $exe version) -ge [version]$latest) { $install = $false } } catch { }
+    }
+    if ($install) {
+      Write-Host 'Installer downloaden...'
+      Invoke-WebRequest -UseBasicParsing -Uri "$Server/api/devices/download/windows" -OutFile $tmp
+      Write-Host 'Installeren...'
+      $p = Start-Process -FilePath $tmp -ArgumentList '/S' -Wait -PassThru
+      if ($p.ExitCode -ne 0) { throw "Installer stopte met code $($p.ExitCode)" }
+    } else { Write-Host 'Claude Agent is al actueel.' }
+    # a code means: pair with this server; pairings with other servers stay (agent 1.7+), the same server is replaced
     if ($Code) {
-      if ($paired) { Write-Host 'Bestaande koppeling gevonden, opnieuw koppelen met deze server...' } else { Write-Host 'Koppelen...' }
+      if ($paired) { Write-Host 'Bestaande koppeling gevonden, deze server wordt toegevoegd (andere servers blijven gekoppeld)...' } else { Write-Host 'Koppelen...' }
       Stop-Service ClaudeAgent -ErrorAction SilentlyContinue
       $out = & $exe enroll --server $Server --code $Code 2>&1
       if ($LASTEXITCODE -ne 0) { throw "Koppelen mislukt: $out" }

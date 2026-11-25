@@ -69,7 +69,8 @@ FunctionEnd
 
 Function PairPage
   ${If} $Enrolled == "1"
-    Abort ; already paired: this is an update
+  ${AndIf} $Code == ""
+    Abort ; already paired and no new code: this is an update (with a code: pair an extra server)
   ${EndIf}
   !insertmacro MUI_HEADER_TEXT "Apparaat koppelen" "Koppelcode uit Claude Chat, Instellingen > Apparaten"
   nsDialogs::Create 1018

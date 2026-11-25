@@ -12,7 +12,7 @@ const remoteSupported = false
 
 var errNoRemote = errors.New("meekijken is nog niet beschikbaar op dit besturingssysteem")
 
-func startRemote(session, key string) error        { return errNoRemote }
+func startRemote(server, session, key string) error        { return errNoRemote }
 func sendSAS() error                               { return errNoRemote }
 func setDPIAware()                                 {}
 func newCapturer() (capturer, error)               { return nil, errNoRemote }

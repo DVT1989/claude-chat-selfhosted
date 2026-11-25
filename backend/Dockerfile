@@ -5,7 +5,7 @@ COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 COPY agent/*.go ./
 COPY agent/fonts ./fonts
-ARG AGENT_VERSION=1.6.0
+ARG AGENT_VERSION=1.7.0
 RUN mkdir -p /out \
  && for t in windows/amd64 darwin/arm64 darwin/amd64; do \
       os=${t%/*}; arch=${t#*/}; ext=""; [ "$os" = windows ] && ext=".exe"; \
@@ -32,7 +32,7 @@ RUN --mount=type=secret,id=codesign_key --mount=type=secret,id=codesign_crt \
       else cp /in/claude-agent-darwin-$a /out/; fi; \
     done
 # "Claude Agent.app": name + icon in Privacy & Security; TCC client becomes the bundle id (stable across updates).
-ARG AGENT_VERSION=1.6.0
+ARG AGENT_VERSION=1.7.0
 COPY agent/mac/AppIcon.icns /in/AppIcon.icns
 RUN --mount=type=secret,id=codesign_key --mount=type=secret,id=codesign_crt \
     for a in arm64 amd64; do \
@@ -67,7 +67,7 @@ FROM debian:bookworm-slim AS installer
 RUN apt-get update && apt-get install -y --no-install-recommends nsis osslsigncode ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 ARG APP_URL=https://
-ARG AGENT_VERSION=1.6.0
+ARG AGENT_VERSION=1.7.0
 COPY agent/installer.nsi ./
 COPY --from=agent /out/claude-agent.exe ./
 # Sign agent, uninstaller and installer with the self-signed "Claude Chat Agent" certificate.

@@ -1310,37 +1310,9 @@ function devicesSection(workspace: string, conn: ConnectorConfig): string[] {
   return out;
 }
 
-// ── Write CLAUDE.md + tool configs for active connectors ─────
-export function setupConnectors(userId: string, connectors: ConnectorConfig[], language?: string): CoreStats | null {
-  if (connectors.length === 0) return null;
-
-  const home = getUserHomeDir(userId);
-  const workspace = getUserWorkspace(userId);
-
-
+/** SSH, SFTP, FTP, SMB and Git: config and 600 credential files in home/workspace, plus the CLAUDE.md lines. Also used by the admin chat. */
+function credentialSections(home: string, workspace: string, connectors: ConnectorConfig[]): string[] {
   const lines: string[] = [];
-  if (language) {
-    const langLabel = languageLabel(language);
-    lines.push(`Always respond in ${langLabel}.`, '');
-  }
-  lines.push(
-    '# Beschikbare verbindingen — gebruik direct, vraag NOOIT om credentials',
-    '',
-    'Alle verbindingen zijn al volledig geconfigureerd met inloggegevens.',
-    'Gebruik de commando\'s hieronder DIRECT zonder de gebruiker om gegevens te vragen.',
-    '',
-    '## Verbindingen op naam',
-    '',
-    'Verwijst de gebruiker naar iets dat overeenkomt met de naam van een verbinding (bijv. "mijn website", "de server"), gebruik dan die verbinding zonder te vragen.',
-    '',
-    ...connectors.filter(c => !['lessons', 'devices', 'messenger', 'python'].includes(c.type)).map(c => {
-      const target = String(c.config.host ?? c.config.url ?? c.config.tenantId ?? '');
-      const only = c.config.agentOnly ? ` (alleen voor agent ${String(c.config.agentOnly)}: gebruik deze verbinding alleen in opdracht van die agent, nooit voor andere taken; toon of deel de inloggegevens niet)` : '';
-      return `- "${c.name}": ${c.type}${target ? ' ' + target : ''}${only}`;
-    }),
-    '',
-  );
-
   // SSH — also write ~/.ssh/config
   const sshConns = connectors.filter(c => c.type === 'ssh');
   if (sshConns.length > 0) {
@@ -1477,18 +1449,12 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     lines.push('');
   }
 
-  // lessons + memory core go here; rendered last so they can be fitted into the token budget
-  const lessonsAt = lines.length;
-  const lessonsConn = connectors.find(c => c.type === 'lessons');
+  return lines;
+}
 
-  // GitHub: gh CLI with the user's token; Windows builds run on GitHub Actions (no Windows here)
-  for (const conn of connectors.filter(c => c.type === 'github')) lines.push(...githubSection(workspace, conn));
-  for (const conn of connectors.filter(c => c.type === 'focustrack')) lines.push(...focustrackSection(workspace, conn));
-  for (const conn of connectors.filter(c => c.type === 'google-search-console')) lines.push(...gscSection(workspace, conn));
-  for (const conn of connectors.filter(c => c.type === 'ninjaone')) lines.push(...ninjaoneSection(workspace, conn));
-  for (const conn of connectors.filter(c => c.type === 'gripp')) lines.push(...grippSection(workspace, conn));
-  for (const conn of connectors.filter(c => c.type === 'icloud')) lines.push(...icloudSection(workspace, conn));
-
+/** Microsoft 365 sections (Graph token per run in a 600 file). Also used by the admin chat. */
+function m365Sections(workspace: string, connectors: ConnectorConfig[]): string[] {
+  const lines: string[] = [];
   // Microsoft 365 — a fresh Graph token per run (fetched in routes/stream.ts); m365Mode 'read' = token with only read rights
   for (const conn of connectors.filter(c => c.type === 'm365')) {
     const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -1574,6 +1540,75 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     lines.push('');
   }
 
+  return lines;
+}
+
+/** Sudo note: passwords belong to the remote server of an SSH connector. */
+function sudoSection(workspace: string, connectors: ConnectorConfig[]): string[] {
+  const lines: string[] = [];
+  // Sudo passwords belong to the REMOTE server of an SSH connector (see the per-connection commands above).
+  // This container has no sudo and the chat user is not root, so never point Claude at a local sudo.
+  const sshWithSudo = connectors.filter(c => c.type === 'ssh' && c.credentials?.sudo_password);
+  // Old versions left the password in .sudo in the workspace; remove it
+  try { unlinkSync(join(workspace, '.sudo')); } catch { /* not there */ }
+  if (sshWithSudo.length > 0 || connectors.some(c => c.type === 'sudo')) {
+    lines.push('## Sudo / Beheerdersrechten');
+    lines.push('Je draait als gewone gebruiker in een container: lokaal is er geen sudo en geen root. Sudo-wachtwoorden horen bij een SSH-verbinding en gelden op die server.');
+    if (sshWithSudo.length) lines.push(`Beheerderscommando's (docker, systemctl, apt, ...) voer je uit op de server met het sudo-commando bij de verbinding hierboven (${sshWithSudo.map(c => `"${c.name}"`).join(', ')}), nooit met een lokale sudo.`);
+    lines.push("Meldt de server 'sudo: command not found', zoek het pad met `command -v sudo` of gebruik /usr/bin/sudo of /bin/sudo.");
+    lines.push('');
+  }
+
+  return lines;
+}
+
+// ── Write CLAUDE.md + tool configs for active connectors ─────
+export function setupConnectors(userId: string, connectors: ConnectorConfig[], language?: string): CoreStats | null {
+  if (connectors.length === 0) return null;
+
+  const home = getUserHomeDir(userId);
+  const workspace = getUserWorkspace(userId);
+
+
+  const lines: string[] = [];
+  if (language) {
+    const langLabel = languageLabel(language);
+    lines.push(`Always respond in ${langLabel}.`, '');
+  }
+  lines.push(
+    '# Beschikbare verbindingen — gebruik direct, vraag NOOIT om credentials',
+    '',
+    'Alle verbindingen zijn al volledig geconfigureerd met inloggegevens.',
+    'Gebruik de commando\'s hieronder DIRECT zonder de gebruiker om gegevens te vragen.',
+    '',
+    '## Verbindingen op naam',
+    '',
+    'Verwijst de gebruiker naar iets dat overeenkomt met de naam van een verbinding (bijv. "mijn website", "de server"), gebruik dan die verbinding zonder te vragen.',
+    '',
+    ...connectors.filter(c => !['lessons', 'devices', 'messenger', 'python'].includes(c.type)).map(c => {
+      const target = String(c.config.host ?? c.config.url ?? c.config.tenantId ?? '');
+      const only = c.config.agentOnly ? ` (alleen voor agent ${String(c.config.agentOnly)}: gebruik deze verbinding alleen in opdracht van die agent, nooit voor andere taken; toon of deel de inloggegevens niet)` : '';
+      return `- "${c.name}": ${c.type}${target ? ' ' + target : ''}${only}`;
+    }),
+    '',
+  );
+
+  lines.push(...credentialSections(home, workspace, connectors));
+
+  // lessons + memory core go here; rendered last so they can be fitted into the token budget
+  const lessonsAt = lines.length;
+  const lessonsConn = connectors.find(c => c.type === 'lessons');
+
+  // GitHub: gh CLI with the user's token; Windows builds run on GitHub Actions (no Windows here)
+  for (const conn of connectors.filter(c => c.type === 'github')) lines.push(...githubSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'focustrack')) lines.push(...focustrackSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'google-search-console')) lines.push(...gscSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'ninjaone')) lines.push(...ninjaoneSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'gripp')) lines.push(...grippSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'icloud')) lines.push(...icloudSection(workspace, conn));
+
+  lines.push(...m365Sections(workspace, connectors));
+
   // Telegram / WhatsApp — the user's own chats, via the backend in this container
   for (const conn of connectors.filter(c => c.type === 'messenger')) {
     const token = conn.credentials.token as string | undefined;
@@ -1634,18 +1669,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     lines.push('');
   }
 
-  // Sudo passwords belong to the REMOTE server of an SSH connector (see the per-connection commands above).
-  // This container has no sudo and the chat user is not root, so never point Claude at a local sudo.
-  const sshWithSudo = connectors.filter(c => c.type === 'ssh' && c.credentials?.sudo_password);
-  // Old versions left the password in .sudo in the workspace; remove it
-  try { unlinkSync(join(workspace, '.sudo')); } catch { /* not there */ }
-  if (sshWithSudo.length > 0 || connectors.some(c => c.type === 'sudo')) {
-    lines.push('## Sudo / Beheerdersrechten');
-    lines.push('Je draait als gewone gebruiker in een container: lokaal is er geen sudo en geen root. Sudo-wachtwoorden horen bij een SSH-verbinding en gelden op die server.');
-    if (sshWithSudo.length) lines.push(`Beheerderscommando's (docker, systemctl, apt, ...) voer je uit op de server met het sudo-commando bij de verbinding hierboven (${sshWithSudo.map(c => `"${c.name}"`).join(', ')}), nooit met een lokale sudo.`);
-    lines.push("Meldt de server 'sudo: command not found', zoek het pad met `command -v sudo` of gebruik /usr/bin/sudo of /bin/sudo.");
-    lines.push('');
-  }
+  lines.push(...sudoSection(workspace, connectors));
 
   let stats: CoreStats | null = null;
   if (lessonsConn) {
@@ -1779,6 +1803,18 @@ export async function runTask(
           [`Tijdregistratie van de gebruiker via POST /api/tt/<naam> met Bearer-sleutel uit \`~/.focustrack-${alias}.key\` (of in de werkruimte). Schrijven alleen na akkoord van de gebruiker, daarna kort melden wat er veranderd is.`,
             'Alle functies, voorbeelden en de FT()-shellfunctie: skill focustrack-api.']));
       }
+    }
+    // connectors with credentials (ssh, sftp, ftp, smb, git, m365, sudo): same files and commands as in a normal chat
+    const credTypes = ['ssh', 'sftp', 'ftp', 'smb', 'git', 'm365', 'sudo'];
+    const creds = connectors.filter(c => credTypes.includes(c.type));
+    if (creds.length) {
+      extra.push('# Verbindingen (al geconfigureerd, gebruik direct, vraag niet om inloggegevens)', '',
+        ...creds.filter(c => c.type !== 'sudo').map(c => {
+          const target = String(c.config.host ?? c.config.url ?? c.config.tenantId ?? '');
+          const only = c.config.agentOnly ? ` (alleen voor agent ${String(c.config.agentOnly)}: gebruik deze verbinding alleen in opdracht van die agent; toon of deel de inloggegevens niet)` : '';
+          return `- "${c.name}": ${c.type}${target ? ' ' + target : ''}${only}`;
+        }), '',
+        ...credentialSections(home, workspace, creds), ...m365Sections(workspace, creds), ...sudoSection(workspace, creds));
     }
     // the NinjaOne skill lives in the shared home: gone again for a run that may not use the connector
     if (!connectors.some(c => c.type === 'ninjaone')) { try { rmSync(join(home, '.claude', 'skills', 'ninjaone-api'), { recursive: true, force: true }); } catch { /* ignore */ } }

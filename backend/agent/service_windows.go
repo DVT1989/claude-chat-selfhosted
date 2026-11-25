@@ -68,11 +68,20 @@ func runService() {
 
 // reportState tells the server the device is going away (shutdown or sleep), briefly and best effort.
 func reportState(state string) {
-	cfg, err := loadConfig()
+	list, err := loadConfigs()
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_ = post(ctx, cfg.Server, cfg.Token, "state", map[string]string{"state": state}, nil)
+	done := make(chan struct{}, len(list))
+	for _, cfg := range list {
+		go func(cfg *Config) {
+			_ = post(ctx, cfg.Server, cfg.Token, "state", map[string]string{"state": state}, nil)
+			done <- struct{}{}
+		}(cfg)
+	}
+	for range list {
+		<-done
+	}
 }

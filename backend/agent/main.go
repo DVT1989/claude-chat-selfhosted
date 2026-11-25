@@ -70,27 +70,85 @@ func configDir() string {
 
 func configPath() string { return filepath.Join(configDir(), "config.json") }
 
-func loadConfig() (*Config, error) {
+// configFile is config.json. The top-level fields hold the first server (older agents read only
+// those); Servers holds every server this device is paired with (one device, several installations).
+type configFile struct {
+	Config
+	Servers []Config `json:"servers,omitempty"`
+}
+
+// loadConfigs returns every paired server (old single-server files are read as a list of one).
+func loadConfigs() ([]*Config, error) {
 	b, err := os.ReadFile(configPath())
 	if err != nil {
 		return nil, err
 	}
-	var c Config
-	if err := json.Unmarshal(b, &c); err != nil {
+	var f configFile
+	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
-	if c.Server == "" || c.Token == "" {
+	list := f.Servers
+	if len(list) == 0 {
+		list = []Config{f.Config}
+	}
+	var out []*Config
+	for i := range list {
+		c := list[i]
+		if c.Server != "" && c.Token != "" {
+			out = append(out, &c)
+		}
+	}
+	if len(out) == 0 {
 		return nil, errors.New("config onvolledig")
 	}
-	return &c, nil
+	return out, nil
 }
 
-func saveConfig(c *Config) error {
+// loadConfig returns the first paired server.
+func loadConfig() (*Config, error) {
+	list, err := loadConfigs()
+	if err != nil {
+		return nil, err
+	}
+	return list[0], nil
+}
+
+// configFor returns the current entry for a server (nil when it is no longer paired).
+func configFor(server string) *Config {
+	list, _ := loadConfigs()
+	for _, c := range list {
+		if sameServer(c.Server, server) {
+			return c
+		}
+	}
+	return nil
+}
+
+func sameServer(a, b string) bool {
+	return strings.EqualFold(normalizeServer(a), normalizeServer(b))
+}
+
+func saveConfigs(list []*Config) error {
 	if err := os.MkdirAll(configDir(), 0o700); err != nil {
 		return err
 	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(configPath(), b, 0o600)
+	if len(list) == 0 {
+		err := os.Remove(configPath())
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	f := configFile{Config: *list[0]}
+	for _, c := range list {
+		f.Servers = append(f.Servers, *c)
+	}
+	b, _ := json.MarshalIndent(f, "", "  ")
+	tmp := configPath() + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, configPath())
 }
 
 func normalizeServer(s string) string {
@@ -162,22 +220,43 @@ func enroll(server, code string) error {
 	if err != nil {
 		return err
 	}
-	if err := saveConfig(&Config{Server: server, DeviceID: out.DeviceID, Token: out.Token}); err != nil {
+	// same server: replace that pairing; another server: add it next to the existing ones
+	list, _ := loadConfigs()
+	nc := &Config{Server: server, DeviceID: out.DeviceID, Token: out.Token}
+	replaced := false
+	for i, c := range list {
+		if sameServer(c.Server, server) {
+			list[i] = nc
+			replaced = true
+		}
+	}
+	if !replaced {
+		list = append(list, nc)
+	}
+	if err := saveConfigs(list); err != nil {
 		return fmt.Errorf("config opslaan mislukt: %w", err)
 	}
 	fmt.Printf("Gekoppeld als %s\n", out.Name)
 	return nil
 }
 
-func unenroll() {
-	c, err := loadConfig()
+// unenroll removes one server (server given) or every pairing (uninstall).
+func unenroll(server string) {
+	list, err := loadConfigs()
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = post(ctx, c.Server, c.Token, "unenroll", map[string]string{}, nil)
-	_ = os.Remove(configPath())
+	var keep []*Config
+	for _, c := range list {
+		if server != "" && !sameServer(c.Server, server) {
+			keep = append(keep, c)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = post(ctx, c.Server, c.Token, "unenroll", map[string]string{}, nil)
+		cancel()
+	}
+	_ = saveConfigs(keep)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
@@ -187,23 +266,70 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	}
 }
 
-// runLoop is the service body: long-poll for jobs until the context ends.
+// runLoop is the service body: one long-poll loop per paired server until the context ends.
+// The pairings are re-read every 30 seconds, so a server added with "enroll" starts without restart.
 func runLoop(ctx context.Context) {
 	setupLog()
 	log.Printf("Claude Agent %s gestart (%s/%s)", version, runtime.GOOS, runtime.GOARCH)
-	backoff := 2 * time.Second
-	invStarted := false
+	started := false
+	invSent := false
+	running := map[string]bool{}
+	done := make(chan string, 8)
 	for ctx.Err() == nil {
-		cfg, err := loadConfig()
+		list, err := loadConfigs()
 		if err != nil {
 			log.Printf("geen geldige config (%v); opnieuw over 1 minuut", err)
-			sleepCtx(ctx, time.Minute)
-			continue
+		} else {
+			if !started {
+				started = true
+				go startPlatformLoops(ctx)
+				go inventoryLoop(ctx)
+			}
+			for _, c := range list {
+				c := c
+				key := strings.ToLower(normalizeServer(c.Server))
+				if !running[key] {
+					running[key] = true
+					if invSent {
+						go sendInventory(ctx, c) // newly added server: inventory now, not after 6 hours
+					}
+					go func(server, key string) {
+						serverLoop(ctx, server)
+						done <- key
+					}(c.Server, key)
+				}
+			}
 		}
-		if !invStarted {
-			invStarted = true
-			go startPlatformLoops(ctx)
-			go inventoryLoop(ctx)
+		invSent = started
+		wait := 30 * time.Second
+		if err != nil {
+			wait = time.Minute
+		}
+		t := time.NewTimer(wait)
+	drain:
+		for {
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case k := <-done:
+				delete(running, k)
+			case <-t.C:
+				break drain
+			}
+		}
+	}
+}
+
+// serverLoop long-polls one server; it ends when that server is no longer in the config.
+func serverLoop(ctx context.Context, server string) {
+	log.Printf("verbinden met %s", server)
+	backoff := 2 * time.Second
+	for ctx.Err() == nil {
+		cfg := configFor(server)
+		if cfg == nil {
+			log.Printf("%s is ontkoppeld", server)
+			return
 		}
 		var resp struct {
 			Jobs []Job `json:"jobs"`
@@ -213,18 +339,24 @@ func runLoop(ctx context.Context) {
 		if p := remotePerms(); p != nil {
 			body["perms"] = p
 		}
-		err = post(pctx, cfg.Server, cfg.Token, "poll", body, &resp)
+		err := post(pctx, cfg.Server, cfg.Token, "poll", body, &resp)
 		cancel()
 		if ctx.Err() != nil {
 			return
 		}
 		if errors.Is(err, errRevoked) {
-			log.Printf("server weigert de sleutel: %v; opnieuw over 1 uur", err)
-			sleepCtx(ctx, time.Hour)
+			log.Printf("%s weigert de sleutel: %v; opnieuw over 1 uur", cfg.Server, err)
+			// wake early when the pairing for this server is renewed
+			for i := 0; i < 60 && ctx.Err() == nil; i++ {
+				sleepCtx(ctx, time.Minute)
+				if n := configFor(server); n == nil || n.Token != cfg.Token {
+					break
+				}
+			}
 			continue
 		}
 		if err != nil {
-			log.Printf("poll mislukt: %v", err)
+			log.Printf("poll %s mislukt: %v", cfg.Server, err)
 			sleepCtx(ctx, backoff)
 			// short cap: after sleep or a network change the device should be back within seconds
 			if backoff < 15*time.Second {
@@ -255,18 +387,33 @@ func sendResult(ctx context.Context, cfg *Config, r Result) {
 func inventoryLoop(ctx context.Context) {
 	sleepCtx(ctx, 5*time.Second)
 	for ctx.Err() == nil {
-		if cfg, err := loadConfig(); err == nil {
+		if list, err := loadConfigs(); err == nil {
 			if inv, err := collectInventory(ctx); err == nil {
-				ictx, cancel := context.WithTimeout(ctx, 60*time.Second)
-				if err := post(ictx, cfg.Server, cfg.Token, "inventory", map[string]any{"inventory": inv}, nil); err != nil {
-					log.Printf("inventaris versturen mislukt: %v", err)
+				for _, cfg := range list {
+					ictx, cancel := context.WithTimeout(ctx, 60*time.Second)
+					if err := post(ictx, cfg.Server, cfg.Token, "inventory", map[string]any{"inventory": inv}, nil); err != nil {
+						log.Printf("inventaris naar %s versturen mislukt: %v", cfg.Server, err)
+					}
+					cancel()
 				}
-				cancel()
 			} else {
 				log.Printf("inventaris mislukt: %v", err)
 			}
 		}
 		sleepCtx(ctx, 6*time.Hour)
+	}
+}
+
+func sendInventory(ctx context.Context, cfg *Config) {
+	sleepCtx(ctx, 5*time.Second)
+	inv, err := collectInventory(ctx)
+	if err != nil {
+		return
+	}
+	ictx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if err := post(ictx, cfg.Server, cfg.Token, "inventory", map[string]any{"inventory": inv}, nil); err != nil {
+		log.Printf("inventaris naar %s versturen mislukt: %v", cfg.Server, err)
 	}
 }
 
@@ -285,7 +432,7 @@ func setupLog() {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Gebruik: claude-agent enroll --server URL --code CODE | run | unenroll | version")
+		fmt.Println("Gebruik: claude-agent enroll --server URL --code CODE | run | servers | unenroll [--server URL] | version")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -305,7 +452,15 @@ func main() {
 	case "mac-perms":
 		runMacPerms(os.Args[2:])
 	case "unenroll":
-		unenroll()
+		fs := flag.NewFlagSet("unenroll", flag.ExitOnError)
+		server := fs.String("server", "", "alleen deze server ontkoppelen")
+		_ = fs.Parse(os.Args[2:])
+		unenroll(*server)
+	case "servers":
+		list, _ := loadConfigs()
+		for _, c := range list {
+			fmt.Println(c.Server)
+		}
 	case "version":
 		fmt.Println(version)
 	default:

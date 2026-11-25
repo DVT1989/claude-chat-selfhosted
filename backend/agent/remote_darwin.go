@@ -284,7 +284,7 @@ func startPlatformLoops(ctx context.Context) {
 
 // ── Starting the helper ─────────────────────────────────────
 
-func startRemote(session, key string) error {
+func startRemote(server, session, key string) error {
 	st, err := checkPerms("check")
 	if err != nil {
 		return err
@@ -299,10 +299,6 @@ func startRemote(session, key string) error {
 		}
 		go requestPermsOnce()
 		return errors.New("Toestemming ontbreekt op de Mac: " + strings.Join(miss, " en ") + ". " + permsHelp)
-	}
-	server := ""
-	if cfg, err := loadConfig(); err == nil {
-		server = cfg.Server
 	}
 	_, err = userJob("desktop", []string{"desktop", "--session", session, "--key", key, "--server", server}, 0)
 	return err

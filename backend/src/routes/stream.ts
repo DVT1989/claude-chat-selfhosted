@@ -1261,8 +1261,8 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   // subscription has room, the answer continues there once (same session, so nothing is lost).
   const SWITCH_NOTE = 'Ik doe even een snelle wissel naar mijn andere account: de tokens voor deze sessie zijn bijna op. Ik ga gewoon verder.';
   const CONTINUE_PROMPT = 'Je werd net onderbroken door een gebruikslimiet. Ga verder met mijn vorige vraag, precies waar je gebleven was.';
-  // admin chat and its workplaces only get proxy/token connectors; passwords (ssh, ftp, smb, sudo) stay out of the privileged run
-  const ADMIN_RUN_TYPES: string[] = ['devices', 'github', 'lessons', 'focustrack', 'google-search-console', 'ninjaone', 'gripp', 'icloud'];
+  // admin chat and its workplaces get every connector of the admin (also ssh, ftp, smb, sudo, m365), same as a normal chat
+  const ADMIN_RUN_TYPES: string[] = ['devices', 'github', 'lessons', 'focustrack', 'google-search-console', 'ninjaone', 'gripp', 'icloud', 'ssh', 'sftp', 'ftp', 'smb', 'git', 'm365', 'sudo', 'python'];
   if (isSystemConv) {
     const skipped = connectors.filter(c => !ADMIN_RUN_TYPES.includes(c.type) && c.type !== 'messenger');
     if (skipped.length) console.log(`[stream] admin-run ${conv.id}: niet meegegeven ${skipped.map(c => `${c.type}:${c.name}`).join(', ')}`);

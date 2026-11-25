@@ -667,7 +667,9 @@ streamRouter.get('/:id/stream', async (req: Request, res: Response, next) => {
       next(err);
     } else {
       try {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Stream fout' })}\n\n`);
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error('[stream] fout na start van de stream:', err);
+        res.write(`event: error\ndata: ${JSON.stringify({ message: `Stream fout: ${detail.slice(0, 300)}` })}\n\n`);
       } catch { /* response already gone */ }
       try { res.end(); } catch { /* ignore */ }
     }
@@ -713,7 +715,9 @@ streamRouter.post('/:id/stream', async (req: Request, res: Response, next) => {
       next(err);
     } else {
       try {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Stream fout' })}\n\n`);
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error('[stream] fout na start van de stream:', err);
+        res.write(`event: error\ndata: ${JSON.stringify({ message: `Stream fout: ${detail.slice(0, 300)}` })}\n\n`);
       } catch { /* response already gone */ }
       try { res.end(); } catch { /* ignore */ }
     }

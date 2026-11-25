@@ -20,6 +20,10 @@ export const M365_SCOPES = toScope([...BASE_SCOPES,
   'Files.ReadWrite.All', // OneDrive and SharePoint files this account can open, and write where it may edit
   'Calendars.Read', // own calendar (planning, hours)
 ]);
+/** Read rights: what an agent set to "Lezen" gets (a token with only these, so it cannot write). */
+export const M365_READ_SCOPES = toScope(['offline_access', 'User.Read', 'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
+  'AuditLog.Read.All', 'Reports.Read.All', 'Policy.Read.All', 'DeviceManagementManagedDevices.Read.All', 'DeviceManagementConfiguration.Read.All',
+  'DeviceManagementApps.Read.All', 'Mail.Read', 'Mail.Read.Shared', 'Files.Read.All', 'Calendars.Read']);
 /** What tenants linked before 2026-11-20 consented to; their refresh keeps working until they link again. */
 const LEGACY_SCOPES = toScope([...BASE_SCOPES, 'Files.Read.All']);
 
@@ -129,7 +133,7 @@ export function deviceLoginStatus(userId: string): Pending | null {
  * Fresh Graph access token for a tenant connector (called at the start of every Claude run).
  * Stores the rotated refresh token so the 90-day sliding window keeps going.
  */
-export async function graphAccessToken(userId: string, tenantId: string, credentialsEnc: string): Promise<string> {
+export async function graphAccessToken(userId: string, tenantId: string, credentialsEnc: string, mode: 'write' | 'read' = 'write'): Promise<string> {
   const { refresh_token } = JSON.parse(decrypt(credentialsEnc)) as { refresh_token?: string };
   if (!refresh_token) throw new Error('geen refresh token');
   // Our own scope list, never ".default": that returns every right ever consented to this public client in the
@@ -137,6 +141,18 @@ export async function graphAccessToken(userId: string, tenantId: string, credent
   const refresh = (scope: string) => form(`${loginBase()}/${tenantId}/oauth2/v2.0/token`, {
     grant_type: 'refresh_token', client_id: M365_CLIENT_ID, refresh_token, scope,
   });
+  if (mode === 'read') {
+    // read-only run (an agent set to "Lezen"): a token with only read rights; if that is not possible, the normal path below
+    const r = await refresh(M365_READ_SCOPES);
+    if (r.access_token) {
+      if (r.refresh_token && r.refresh_token !== refresh_token) {
+        await query(`UPDATE connectors SET credentials_enc = $3, last_tested_at = now()
+                      WHERE user_id = $1 AND type = 'm365' AND config->>'tenantId' = $2`,
+          [userId, tenantId, encrypt(JSON.stringify({ refresh_token: r.refresh_token }))]);
+      }
+      return String(r.access_token);
+    }
+  }
   let t = await refresh(M365_SCOPES);
   // linked before the new rights existed: no consent for them yet, so keep the old set until the user links again
   if (!t.access_token && /AADSTS65001|consent|invalid_scope|AADSTS70000/i.test(String(t.error_description ?? t.error ?? ''))) {
@@ -154,4 +170,20 @@ export async function graphAccessToken(userId: string, tenantId: string, credent
       [userId, tenantId, encrypt(JSON.stringify({ refresh_token: t.refresh_token }))]);
   }
   return String(t.access_token);
+}
+
+/**
+ * Microsoft 365 is opt-in per agent: config.agent_access maps agent id -> 'read' | 'write'; no entry = no access.
+ * A run without agents (the owner's own main Claude) gets 'write'. With several agents in the run the lowest
+ * level counts; null = leave the tenant out of this run.
+ */
+export function m365RunMode(accessRaw: unknown, agentIds: string[]): 'read' | 'write' | null {
+  if (!agentIds.length) return 'write';
+  const access = (accessRaw ?? {}) as Record<string, string>;
+  let mode: 'read' | 'write' = 'write';
+  for (const id of agentIds) {
+    if (access[id] === 'read') mode = 'read';
+    else if (access[id] !== 'write') return null;
+  }
+  return mode;
 }

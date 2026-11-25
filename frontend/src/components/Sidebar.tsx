@@ -75,10 +75,23 @@ export default function Sidebar({ withList = true }: { withList?: boolean }) {
       src.addEventListener('conversation-update', (e: MessageEvent) => {
         loadConversations();
         try {
-          const data = JSON.parse(e.data) as { action?: string; conversationId?: string };
+          const data = JSON.parse(e.data) as { action?: string; conversationId?: string; memberIds?: string[]; userId?: string };
           if (data.action === 'resumed' && data.conversationId) {
             setRefreshConversationId(data.conversationId);
           }
+          // a member of a shared project wrote or got an answer: refresh that chat for the others
+          const me = useAuthStore.getState().user?.id;
+          if (data.action === 'shared' && data.conversationId && me && data.userId !== me && data.memberIds?.includes(me)) {
+            setRefreshConversationId(data.conversationId);
+            window.dispatchEvent(new CustomEvent('cc:shared', { detail: data }));
+          }
+        } catch { /* ignore */ }
+      });
+      src.addEventListener('shared-typing', (e: MessageEvent) => {
+        try {
+          const d = JSON.parse(e.data) as { userId?: string; memberIds?: string[] };
+          const me = useAuthStore.getState().user?.id;
+          if (me && d.userId !== me && d.memberIds?.includes(me)) window.dispatchEvent(new CustomEvent('cc:typing', { detail: d }));
         } catch { /* ignore */ }
       });
       src.addEventListener('hello', (e: MessageEvent) => {

@@ -10,10 +10,13 @@ import { broadcastSse } from '../services/sseEvents';
 import { join } from 'path';
 import { decrypt } from '../services/crypto';
 import * as broker from '../services/streamBroker';
-import { graphAccessToken } from '../services/m365';
+import { graphAccessToken, m365RunMode } from '../services/m365';
 import { scrubIfSecret } from '../services/agentTraining';
 import { sendPushToUser } from '../services/pushNotifications';
 import * as queue from '../services/messageQueue';
+import { convAccess, projectAccess, projectMembers, notifyMembers } from '../services/sharedProjects';
+import { projectRunInfo } from './projects';
+import { fixSharedProjectPerms } from '../services/claudeCode';
 import { agentAutoResumeOn, scheduleResume as scheduleAgentResume, type AgentResume } from '../services/scheduler';
 
 // Stop pressed: the queue waits until the user sends again. "Send now" aborts but keeps the queue going.
@@ -207,6 +210,42 @@ async function notifyAnswerReady(userId: string, convId: string, isSystemConv: b
   } catch (e) { console.error('[push] answer notification failed:', e); }
 }
 
+/** What the others said in this chat since this user's last turn (his own session has the rest) */
+async function sharedChatContext(convId: string, userId: string, name: string, hasSession: boolean): Promise<string> {
+  const last = hasSession
+    ? (await query<{ t: string }>(`SELECT max(created_at) AS t FROM messages WHERE conversation_id = $1 AND role = 'assistant' AND metadata->'asked_by'->>'id' = $2`, [convId, userId])).rows[0]?.t
+    : null;
+  const r = await query<{ role: string; content: string; uname: string | null; asked: string | null }>(
+    `SELECT m.role, m.content, u.name AS uname, m.metadata->'asked_by'->>'name' AS asked FROM messages m LEFT JOIN users u ON u.id = m.user_id
+     WHERE m.conversation_id = $1 AND m.role IN ('user','assistant') AND COALESCE(m.metadata->>'streaming','') <> 'true'
+       AND ($2::timestamptz IS NULL OR m.created_at > $2) ORDER BY m.created_at DESC LIMIT 30`, [convId, last]);
+  const flat = (c: string): string => {
+    let t = c;
+    if (t.trimStart().startsWith('[')) {
+      try { t = (JSON.parse(t) as Array<{ type?: string; text?: string }>).filter((e) => e.type === 'text').map((e) => e.text ?? '').join('\n'); } catch { /* plain */ }
+    }
+    return t.length > 1500 ? t.slice(0, 1500) + '…' : t;
+  };
+  let lines = r.rows.reverse().map((m) => m.role === 'user' ? `${m.uname ?? 'Iemand'}: ${flat(m.content)}` : `Claude (voor ${m.asked ?? 'iemand'}): ${flat(m.content)}`);
+  let text = lines.join('\n\n');
+  if (text.length > 12000) text = '…' + text.slice(-12000);
+  void lines; lines = [];
+  return `Dit is een gedeelde chat van een project: meerdere mensen schrijven erin. De volgende vraag komt van ${name}.` +
+    (text ? `\n\nWat er in deze chat is gezegd ${hasSession ? 'sinds jouw vorige beurt' : 'tot nu toe'}:\n${text}` : '');
+}
+
+/** Push to the other members (only to devices where the app is not open) */
+async function pushToOthers(projectId: string, projectName: string, convId: string, fromId: string, fromName: string, message: string): Promise<void> {
+  try {
+    const members = await projectMembers(projectId);
+    const t = (await query<{ title: string | null }>('SELECT title FROM conversations WHERE id = $1', [convId])).rows[0]?.title;
+    const body = message.replace(/\s+/g, ' ').trim().slice(0, 140);
+    await Promise.all(members.filter((m) => m.id !== fromId).map((m) => sendPushToUser(m.id, {
+      title: `${fromName} in ${projectName}`, body: t ? `${t}: ${body}` : body, url: `/chat/${convId}`, tag: `shared-${convId}`,
+    }, { onlyAway: true })));
+  } catch (e) { console.error('[push] shared notification failed:', e); }
+}
+
 // Track active SSE clients per user — used to suppress push when app already open
 const activeStreams = new Map<string, number>();
 export function isUserActive(userId: string): boolean { return (activeStreams.get(userId) ?? 0) > 0; }
@@ -223,11 +262,13 @@ const MAX_MESSAGE_LENGTH = 50_000;
 const FLUSH_DEBOUNCE_MS = 1_000;
 
 async function getConversation(convId: string, userId: string) {
+  // own chat, or a chat of a project the user is a member of (services/sharedProjects.ts)
+  if (!/^[0-9a-f-]{36}$/i.test(convId) || !await convAccess(convId, userId)) return null;
   const result = await query<{
     id: string; model: string; metadata: Record<string, unknown>;
   }>(
-    'SELECT id, model, metadata FROM conversations WHERE id = $1 AND user_id = $2 AND status != $3',
-    [convId, userId, 'deleted'],
+    'SELECT id, model, metadata FROM conversations WHERE id = $1 AND status != $2',
+    [convId, 'deleted'],
   );
   return result.rows[0] ?? null;
 }
@@ -277,6 +318,13 @@ async function startOrJoinStream(
   // ── Join an in-flight task if one exists for this conversation ──
   const existing = broker.getActiveTask(conv.id);
   if (existing) {
+    // shared chat: a question of another member waits in the queue instead of being lost ("na Sam")
+    const running = askerOf.get(conv.id);
+    if (userMessage.trim() && running && running !== req.user!.userId && (await convAccess(conv.id, req.user!.userId))?.shared) {
+      await queue.enqueue(conv.id, req.user!.userId, userMessage, attachmentIds);
+      stoppedByUser.delete(conv.id);
+      await publishQueue(conv.id);
+    }
     addActive(req.user!.userId);
     const userActiveCleanup = () => removeActive(req.user!.userId);
 
@@ -347,6 +395,8 @@ export interface StartRunOptions {
  * Telegram bot). Persists the user message and an assistant placeholder, then runs in the background.
  * Returns busy when a run is already active for this conversation.
  */
+const askerOf = new Map<string, string>(); // conversation -> user whose run is active (shared projects: queue "na Sam")
+
 export async function startConversationRun(o: StartRunOptions): Promise<{ busy: true } | { busy: false; assistantMsgId: string }> {
   // Take the conversation's task slot synchronously, before any await: otherwise a web and a
   // Telegram start in the same moment both pass the check and the loser breaks the winner's stream.
@@ -357,6 +407,9 @@ export async function startConversationRun(o: StartRunOptions): Promise<{ busy: 
   } catch {
     return { busy: true };
   }
+  askerOf.set(o.conv.id, o.userId);
+  const rawCleanup = cleanup;
+  cleanup = () => { askerOf.delete(o.conv.id); rawCleanup(); };
   try {
     return await prepareAndRun(o, { abort, cleanup });
   } catch (err) {
@@ -377,7 +430,26 @@ async function prepareAndRun(
   const userMessage = o.userMessage;
   const attachmentIds = o.attachmentIds;
   const meta = conv.metadata as { claude_session_id?: string; isSystem?: boolean; delegated_privileged?: boolean; delegation_id?: string };
-  const sessionId = meta.claude_session_id ?? null;
+  const metaShared = conv.metadata as { claude_sessions?: Record<string, string> };
+
+  // Chat in a project: runs in the project dir with its instructions. In a shared project every question runs as the asker.
+  let project: Awaited<ReturnType<typeof projectRunInfo>> | null = null;
+  let projectOwnerId: string | null = null;
+  const isSystemConv0 = meta.isSystem === true || meta.delegated_privileged === true;
+  if (!isSystemConv0) {
+    try {
+      const pid = (await query<{ project_id: string | null }>('SELECT project_id FROM conversations WHERE id = $1', [conv.id])).rows[0]?.project_id;
+      const pa = pid ? await projectAccess(pid, o.userId) : null;
+      if (pa) { project = await projectRunInfo(pa); projectOwnerId = pa.ownerId; }
+    } catch (e) { console.error('[stream] project lookup failed:', (e as Error).message); }
+  }
+  const sharedProject = !!project?.shared;
+  let askerName = '';
+  if (sharedProject) askerName = (await query<{ n: string }>('SELECT COALESCE(name, email) AS n FROM users WHERE id = $1', [o.userId])).rows[0]?.n ?? '';
+  // a session file lives in the home of whoever ran it: in a shared project each member has his own session
+  const sessionId = sharedProject
+    ? (metaShared.claude_sessions?.[o.userId] ?? (!metaShared.claude_sessions && o.userId === projectOwnerId ? meta.claude_session_id ?? null : null))
+    : (meta.claude_session_id ?? null);
 
   // Admin system conversations run privileged (see runTask's privileged option), and so does the
   // workplace of a delegation that came from the admin chat (services/delegations.ts)
@@ -397,21 +469,39 @@ async function prepareAndRun(
     } catch (e) { console.error('[stream] delegation report failed:', e); }
   }
 
+  if (sharedProject && project) {
+    try {
+      promptPrefix = [await sharedChatContext(conv.id, o.userId, askerName, !!sessionId), promptPrefix].filter(Boolean).join('\n\n');
+    } catch (e) { console.error('[stream] shared context failed:', e); }
+  }
+
   // Load ALL active connectors for this user (not just conversation-linked)
   const connResult = await query<{
-    id: string; name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null;
+    id: string; name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null; owner_id: string;
   }>(
-    `SELECT id, name, type, config, credentials_enc
+    `SELECT id, name, type, config, credentials_enc, user_id AS owner_id
      FROM connectors
-     WHERE user_id = $1 AND is_active = true`,
-    [o.userId],
+     WHERE user_id = $1 AND is_active = true AND NOT $3::boolean
+     UNION ALL
+     -- connectors that members share with the project (their own, see routes/projects.ts); credentials stay with the member
+     SELECT c.id, c.name || ' (' || p.name || ')', c.type, c.config, c.credentials_enc, c.user_id
+     FROM project_connectors pc
+     JOIN projects p ON p.id = pc.project_id
+     JOIN connectors c ON c.id = pc.connector_id
+     WHERE pc.project_id = $2::uuid AND c.is_active = true`,
+    // shared project: only the connectors the project shares (no own connectors of the asker outside it)
+    [o.userId, sharedProject ? project!.id : null, sharedProject],
   );
 
   // connectors limited to chosen agents (config.agent_ids): only for the owner's main Claude and those agents
+  let runAgents: string[] = [];
   {
     const { runAgentIds, connectorAllowed } = await import('../services/ninjaone');
-    const runAgents = await runAgentIds(meta as Record<string, unknown>);
+    runAgents = await runAgentIds(meta as Record<string, unknown>);
     connResult.rows = connResult.rows.filter(c => connectorAllowed(c.config ?? {}, runAgents));
+    // Microsoft 365 is opt-in per agent (config.agent_access: agent id -> 'read' | 'write'; no entry = no access).
+    // The owner's own main Claude (no agent in the run) keeps full access.
+    connResult.rows = connResult.rows.filter((c) => c.type !== 'm365' || m365RunMode(c.config?.agent_access, runAgents) !== null);
   }
 
   const connectors: ConnectorConfig[] = connResult.rows.map(c => ({
@@ -425,8 +515,15 @@ async function prepareAndRun(
   // Microsoft 365: trade the stored refresh token for a fresh Graph access token for this run
   await Promise.all(connResult.rows.map(async (row, i) => {
     if (row.type !== 'm365' || !row.credentials_enc) return;
+    const access = (row.config.agent_access ?? {}) as Record<string, string>;
+    const mode: 'read' | 'write' = m365RunMode(access, runAgents) ?? 'read';
+    // names for the prompt: agents of the owner with read / no access (only relevant for a full-access main run)
+    const own = mode === 'write' ? (await query<{ id: string; name: string }>('SELECT id::text AS id, name FROM agents WHERE user_id = $1 AND is_active = true ORDER BY name', [o.userId])).rows : [];
+    const names = (f: (id: string) => boolean) => own.filter((a) => f(a.id)).map((a) => a.name);
+    connectors[i].config = { ...connectors[i].config, m365Mode: mode,
+      readOnlyAgents: names((id) => access[id] === 'read'), noAccessAgents: names((id) => access[id] !== 'read' && access[id] !== 'write') };
     try {
-      connectors[i].credentials = { access_token: await graphAccessToken(o.userId, String(row.config.tenantId), row.credentials_enc) };
+      connectors[i].credentials = { access_token: await graphAccessToken(row.owner_id, String(row.config.tenantId), row.credentials_enc, mode) };
     } catch (err) {
       connectors[i].credentials = { error: (err as Error).message };
     }
@@ -448,7 +545,7 @@ async function prepareAndRun(
     if (row.type !== 'ninjaone') return;
     try {
       const { issueNinjaToken, ninjaBase } = await import('../services/ninjaone');
-      connectors[i].credentials = { token: await issueNinjaToken(o.userId, row.id) };
+      connectors[i].credentials = { token: await issueNinjaToken(row.owner_id, row.id) };
       connectors[i].config = { ...row.config, base: ninjaBase(row.config) };
     } catch (err) {
       connectors[i].credentials = {};
@@ -469,7 +566,7 @@ async function prepareAndRun(
 
   // Devices (Claude Agent) as a pseudo-connector: per-run token, only when there are devices.
   // Every chat, Telegram/WhatsApp and the admin chat: own devices only.
-  {
+  if (!sharedProject) {
     try {
       const { issueClaudeToken } = await import('../services/devices');
       const issued = await issueClaudeToken(o.userId);
@@ -486,10 +583,18 @@ async function prepareAndRun(
     const { memoryCore, issueMemoryToken } = await import('../services/memory');
     const { getBudget } = await import('../services/contextBudget');
     const types = connectors.map((c) => c.type as string);
+    if (sharedProject && project) {
+      // shared project: only the project memory; no personal memory (not of the asker, not of the owner), no lessons token
+      const { projectMemoryCore, issueProjectToken } = await import('../services/sharedProjects');
+      connectors.push({ name: 'Gedeelde kennis', type: 'lessons',
+        config: { lessons: await lessonsFor(types), projectMemory: await projectMemoryCore(project.id), budgetTokens: await getBudget(o.userId) },
+        credentials: { projectMemoryToken: await issueProjectToken(o.userId, project.id, conv.id) } });
+    } else {
     // personal memory (database, per user) rides along: a small core here, the rest Claude searches
     connectors.push({ name: 'Gedeelde kennis', type: 'lessons',
       config: { lessons: await lessonsFor(types), memory: await memoryCore(o.userId), budgetTokens: await getBudget(o.userId) },
       credentials: { token: await issueLessonToken(o.userId), memoryToken: await issueMemoryToken(o.userId) } });
+    }
   } catch (err) {
     console.error('[stream] lessons failed:', err);
   }
@@ -503,9 +608,15 @@ async function prepareAndRun(
       [attachmentIds, o.userId, conv.id])).rows;
   }
   await query(
-    'INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, $2, $3, $4::jsonb)',
-    [conv.id, 'user', userMessage, JSON.stringify({ ...(msgAtts.length ? { attachments: msgAtts } : {}), ...(o.auto ? { auto: o.auto } : {}) })],
+    'INSERT INTO messages (conversation_id, role, content, metadata, user_id) VALUES ($1, $2, $3, $4::jsonb, $5)',
+    [conv.id, 'user', userMessage, JSON.stringify({ ...(msgAtts.length ? { attachments: msgAtts } : {}), ...(o.auto ? { auto: o.auto } : {}) }), o.auto ? null : o.userId],
   );
+  if (sharedProject && project && !o.auto) {
+    await query(`INSERT INTO conversation_reads (conversation_id, user_id, last_read_at) VALUES ($1,$2,now())
+                 ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = now()`, [conv.id, o.userId]).catch(() => undefined);
+    void notifyMembers(project.id, { action: 'shared', conversationId: conv.id, userId: o.userId });
+    void pushToOthers(project.id, project.name, conv.id, o.userId, askerName, userMessage);
+  }
 
   // Live list: a new conversation gets a provisional title from the first message right away (the AI title
   // follows after the run), and every open client refreshes its preview line without a reload.
@@ -542,10 +653,10 @@ async function prepareAndRun(
     `INSERT INTO messages (conversation_id, role, content, metadata)
      VALUES ($1, 'assistant', '', $2::jsonb)
      RETURNING id`,
-    [conv.id, JSON.stringify({ streaming: true })],
+    [conv.id, JSON.stringify({ streaming: true, ...(sharedProject ? { asked_by: { id: o.userId, name: askerName } } : {}) })],
   );
   const assistantMsgId = assistantInsert.rows[0].id;
-  broker.publish(conv.id, 'run_start', { userMessage, assistantMsgId });
+  broker.publish(conv.id, 'run_start', { userMessage, assistantMsgId, ...(sharedProject ? { by: { id: o.userId, name: askerName } } : {}) });
 
   // Load conversation attachments (also for the admin chat; files are read by absolute path)
   const attachmentInfos: AttachmentInfo[] = [];
@@ -581,20 +692,10 @@ async function prepareAndRun(
     effectiveModel = u.rows[0]?.default_model ?? 'sonnet';
   }
 
-  // Chat in a project: runs in the shared project dir with the project's instructions
-  let project: { id: string; name: string; instructions: string } | null = null;
-  if (!isSystemConv) {
-    try {
-      const pr = await query<{ id: string; name: string; instructions: string }>(
-        'SELECT p.id, p.name, p.instructions FROM projects p JOIN conversations c ON c.project_id = p.id WHERE c.id = $1 AND p.user_id = $2',
-        [conv.id, o.userId]);
-      project = pr.rows[0] ?? null;
-    } catch (e) { console.error('[stream] project lookup failed:', (e as Error).message); }
-  }
-
   // Kick the task off in the background; listeners follow it through the broker.
   void runConversationTask({
     project,
+    askedBy: sharedProject ? { id: o.userId, name: askerName } : null,
     userId: o.userId,
     language: o.language,
     conv,
@@ -724,6 +825,20 @@ streamRouter.post('/:id/stream', async (req: Request, res: Response, next) => {
   }
 });
 
+// "Anna typt...": relayed to the other members of a shared project (client throttles to once per 3 s)
+streamRouter.post('/:id/typing', async (req: Request, res: Response, next) => {
+  try {
+    const acc = await convAccess(String(req.params.id), req.user!.userId);
+    if (!acc) throw new AppError(404, 'Gesprek niet gevonden');
+    if (acc.projectId && acc.shared) {
+      const name = (await query<{ n: string }>('SELECT COALESCE(name, email) AS n FROM users WHERE id = $1', [req.user!.userId])).rows[0]?.n ?? '';
+      const ids = (await projectMembers(acc.projectId)).map((m) => m.id);
+      broadcastSse('shared-typing', { conversationId: acc.conversationId, userId: req.user!.userId, name, memberIds: ids });
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // ── Queue: messages sent while Claude is busy ──
 streamRouter.get('/:id/queue', async (req: Request, res: Response, next) => {
   try {
@@ -799,7 +914,8 @@ interface RunArgs {
   language: string;
   conv: { id: string; model: string; metadata: Record<string, unknown> };
   sessionId: string | null;
-  project?: { id: string; name: string; instructions: string } | null;
+  project?: { id: string; name: string; instructions: string; shared?: { gid: number; ownerId: string } | null } | null;
+  askedBy?: { id: string; name: string } | null;
   isSystemConv: boolean;
   connectors: ConnectorConfig[];
   attachmentInfos: AttachmentInfo[];
@@ -816,6 +932,7 @@ interface RunArgs {
 async function runConversationTask(args: RunArgs): Promise<void> {
   const { userId, language, conv, sessionId, isSystemConv, connectors, attachmentInfos, effectiveModel, userMessage, assistantMsgId } = args;
 
+  const askedMeta = args.askedBy ? { asked_by: args.askedBy } : {};
   const abort = args.reserved?.abort ?? new AbortController();
   let cleanupTask: (() => void) | null = args.reserved?.cleanup ?? null;
   try {
@@ -883,7 +1000,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
         const content = computeContent();
         await query(
           `UPDATE messages SET content = $1, metadata = $2::jsonb WHERE id = $3`,
-          [content, JSON.stringify({ streaming: true }), assistantMsgId],
+          [content, JSON.stringify({ streaming: true, ...askedMeta }), assistantMsgId],
         );
       } catch (e) {
         console.error('[stream] incremental flush failed:', e);
@@ -1076,6 +1193,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
 
   try {
     newSessionId = await attempt(args.promptPrefix ? `${args.promptPrefix}\n\n${userMessage}` : userMessage, sessionId, true);
+    if (args.project?.shared) fixSharedProjectPerms(args.project.id, args.project.shared.gid);
     if (limitHit && !abort.signal.aborted && await hasRoomElsewhere(userId)) {
       limitHit = false;
       dropLimitTraces();
@@ -1147,7 +1265,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
     try {
       await query(
         `UPDATE messages SET content = $1, metadata = $2::jsonb WHERE id = $3`,
-        [finalContent, JSON.stringify({ streaming: false, error: errorMessage }), assistantMsgId],
+        [finalContent, JSON.stringify({ streaming: false, error: errorMessage, ...askedMeta }), assistantMsgId],
       );
     } catch (e) { console.error('[stream] final (error) UPDATE failed:', e); }
   } else if (!finalContent && abort.signal.aborted) {
@@ -1181,8 +1299,10 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   if (!runFailed) {
     if (newSessionId && newSessionId !== sessionId) {
       await query(
-        `UPDATE conversations SET metadata = metadata || $1::jsonb WHERE id = $2`,
-        [JSON.stringify({ claude_session_id: newSessionId }), conv.id],
+        args.project?.shared
+          ? `UPDATE conversations SET metadata = jsonb_set(metadata, '{claude_sessions}', COALESCE(metadata->'claude_sessions', '{}'::jsonb) || jsonb_build_object($3::text, $1::text)) WHERE id = $2`
+          : `UPDATE conversations SET metadata = metadata || jsonb_build_object('claude_session_id', $1::text) WHERE id = $2`,
+        args.project?.shared ? [newSessionId, conv.id, userId] : [newSessionId, conv.id],
       ).catch((e) => console.error('[stream] Failed to update session_id:', e));
     }
 
@@ -1202,6 +1322,7 @@ async function runConversationTask(args: RunArgs): Promise<void> {
 
     await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conv.id]).catch(() => {});
     broadcastSse('conversation-update', { action: 'message', userId, conversationId: conv.id });
+    if (args.project?.shared) void notifyMembers(args.project.id, { action: 'shared', conversationId: conv.id, userId });
 
     const totalTokens = doneInputTokens + doneOutputTokens;
     await query(
@@ -1246,6 +1367,9 @@ async function runConversationTask(args: RunArgs): Promise<void> {
       convId: conv.id, assistantMsgId, userMessage, failed: runFailed, limitHit, aborted: abort.signal.aborted, error: runFailed ? errorMessage : '',
     })).catch((e) => console.error('[federation-chat] finish hook failed:', e));
   }
+  // A run in a shared project may have edited geheugen.md: read it back into the project memory
+  void query<{ project_id: string | null }>('SELECT project_id FROM conversations WHERE id = $1', [conv.id])
+    .then((r) => r.rows[0]?.project_id ? import('../services/projectMemoryFile').then((m) => m.syncProjectMemory(r.rows[0].project_id!)) : undefined).catch(() => undefined);
   // The workplace of a delegation: status, summary, push and the card in the parent. Never throws.
   if ((conv.metadata as { delegation_id?: string }).delegation_id) {
     void import('../services/delegations').then((m) => m.onRunFinished({

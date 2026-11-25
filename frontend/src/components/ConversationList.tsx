@@ -13,6 +13,8 @@ import { useChatStore } from '@/lib/store';
 import { conversations as convApi, projectsApi } from '@/lib/api';
 import ConvAvatar from '@/components/ConvAvatar';
 import { NavIcons } from '@/components/navItems';
+import AvatarStack from '@/components/AvatarStack';
+import ShareDialog from '@/components/ShareDialog';
 import ProjectDialog, { ProjectTile, projectColor } from '@/components/ProjectDialog';
 import type { Project } from '@/types';
 
@@ -49,6 +51,8 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
   const plusRef = useRef<HTMLDivElement>(null);
 
   // the open project stays rendered while the pane slides back, so it does not blank out mid-animation
+  const [shareOpen, setShareOpen] = useState(false);
+  const [unread, setUnread] = useState<{ conversations: Record<string, number>; projects: Record<string, number> }>({ conversations: {}, projects: {} });
   const openProject = projects.find((p) => p.id === openProjectId) ?? null;
   const lastOpen = useRef<Project | null>(null);
   if (openProject) lastOpen.current = openProject;
@@ -119,8 +123,18 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
     press.current.timer = null;
   }
 
+  // unread messages of other members (shared projects): reload whenever the chat list changes
+  useEffect(() => {
+    if (!projects.some((p) => p.shared)) { setUnread((u) => (Object.keys(u.projects).length ? { conversations: {}, projects: {} } : u)); return; }
+    const load = () => projectsApi.unread().then((r) => setUnread(r as unknown as { conversations: Record<string, number>; projects: Record<string, number> })).catch(() => {});
+    void load();
+    window.addEventListener('cc:read', load);
+    return () => window.removeEventListener('cc:read', load);
+  }, [projects, conversations]);
+
+  const totalUnread = Object.values(unread.projects).reduce((a, b) => a + b, 0);
   const needle = search.trim().toLowerCase();
-  const matches = (c: (typeof conversations)[number]) => !needle || c.title.toLowerCase().includes(needle) || (c.last_message?.preview ?? '').toLowerCase().includes(needle);
+  const matches = (c: (typeof conversations)[number]) => !c.project_id && (!needle || c.title.toLowerCase().includes(needle) || (c.last_message?.preview ?? '').toLowerCase().includes(needle));
   const visible = conversations.filter(matches);
   const projectMatches = (p: Project) => !needle || p.name.toLowerCase().includes(needle);
   const projectVisible = projects.filter(projectMatches);
@@ -157,7 +171,7 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
           <ConvAvatar id={conv.id} title={conv.title} />
           {/* Fixed time column, so every title and preview ends at the same x */}
           <span className="wa-row-text flex-1 min-w-0 self-stretch grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] content-center gap-x-2 gap-y-0.5 pr-4">
-            <span className="truncate text-[15px] leading-5 text-(--text)">{conv.title}</span>
+            <span className="truncate text-[15px] leading-5 text-(--text)">{conv.title}{unread.conversations[conv.id] > 0 && activeId !== conv.id && <span className="unread-badge ml-2" aria-label={t('unreadCount', { n: unread.conversations[conv.id] })}>{unread.conversations[conv.id]}</span>}</span>
             <span className="text-right text-xs leading-5 text-(--muted) whitespace-nowrap shrink-0 min-w-[3.4rem] tabular-nums">{timeLabel(conv.updated_at, t('yesterday'), loc)}</span>
             <span className="col-span-2 flex items-center gap-1.5 min-w-0 text-[13.5px] leading-5 text-(--muted) [@media(hover:hover)]:group-hover:pr-8">
               {proj && <span className="proj-chip shrink-0" title={proj.name} style={{ '--pc': projectColor(proj.color) } as React.CSSProperties}>{NavIcons.folder('w-3 h-3')}</span>}
@@ -219,7 +233,7 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
               <div className="seg" role="tablist" aria-label={t('segmentLabel')}>
                 <span aria-hidden className="seg-ind" style={{ transform: `translateX(${listTab === 'projects' ? 100 : 0}%)` }} />
                 <button role="tab" aria-selected={listTab === 'chats'} className={clsx('seg-btn', listTab === 'chats' && 'seg-btn-on')} onClick={() => setListView('chats')}>{t('chats')}</button>
-                <button role="tab" aria-selected={listTab === 'projects'} className={clsx('seg-btn', listTab === 'projects' && 'seg-btn-on')} onClick={() => setListView('projects')}>{t('projects')}</button>
+                <button role="tab" aria-selected={listTab === 'projects'} className={clsx('seg-btn', listTab === 'projects' && 'seg-btn-on')} onClick={() => setListView('projects')}>{t('projects')}{totalUnread > 0 && listTab !== 'projects' && <span className="unread-badge ml-1.5" aria-label={t('projectsUnread')}>{totalUnread}</span>}</button>
               </div>
             </div>
 
@@ -273,6 +287,8 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
                           : t('noChatsYet')}
                       </span>
                     </span>
+                    {unread.projects[p.id] > 0 && <span className="unread-badge" aria-label={t('unreadCount', { n: unread.projects[p.id] })}>{unread.projects[p.id]}</span>}
+                    {p.members && <AvatarStack members={p.members} />}
                     <span className="text-(--muted) rotate-180">{NavIcons.back('w-4 h-4')}</span>
                   </button>
                 ))}
@@ -293,6 +309,10 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
                     <h1 className="truncate font-bold text-(--text) text-[19px] leading-6 tracking-tight">{shownProject.name}</h1>
                     <p className="truncate text-xs leading-4 text-(--muted)">{countLabel(projectChats.length)}</p>
                   </div>
+                  {shownProject.members && <AvatarStack members={shownProject.members} className="mr-1" />}
+                  <button onClick={() => setShareOpen(true)} aria-label={t('share')} title={t('share')} className="pv-icon-btn">
+                    {NavIcons.users('w-5 h-5')}
+                  </button>
                   <button onClick={() => setDialog('edit')} aria-label={t('projectSettings')} title={t('projectSettings')} className="pv-icon-btn">
                     {NavIcons.gear('w-5 h-5')}
                   </button>
@@ -354,6 +374,11 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
           </div>
         </div>,
         document.body,
+      )}
+
+      {shareOpen && shownProject && (
+        <ShareDialog project={shownProject} onClose={() => setShareOpen(false)} onChanged={() => void refreshProjects()}
+          onLeft={() => { setListView('projects', null); void refreshProjects(); void convApi.list().then((r) => useChatStore.getState().setConversations(r.conversations)).catch(() => {}); }} />
       )}
 
       {dialog && (

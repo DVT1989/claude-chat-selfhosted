@@ -1,5 +1,8 @@
 'use client';
 
+import UserAvatar from '@/components/UserAvatar';
+import ClaudeLogo from '@/components/ClaudeLogo';
+import { useTranslations } from '@/lib/i18n';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -9,15 +12,20 @@ import type { Message } from '@/types';
 import clsx from 'clsx';
 import { format } from 'date-fns';
 
-import { AgentBubble, useAgents, deriveChain, type AgentStep, type AgentWait } from './AgentBubble';
+import { AgentBubble, useAgents, findAgent, deriveChain, type AgentStep, type AgentWait } from './AgentBubble';
 import { splitMentions } from './MentionMenu';
 import { tasksApi } from '@/lib/api';
 import { LimitEventLine, LimitLine, limitTime, type LimitEvent } from './LimitNotice';
+import ZoomImage from '@/components/Lightbox';
+import ChoiceList, { ChoiceMsgCtx, ChoiceLiveCtx } from './ChoiceList';
 import { DelegationCard, delegationEvents } from './DelegationCard';
 
 import 'highlight.js/styles/github-dark.css';
 
 interface Props {
+  /** shared project: members of this chat and the viewer, to place other people's questions on the left */
+  members?: import('@/types').ProjectMember[];
+  viewerId?: string;
   message: Message;
   /** the saved answer that just replaced the live bubble: a soft cross-fade instead of popping in again */
   still?: boolean;
@@ -170,7 +178,18 @@ function MessageActions({ text }: { text: string }) {
 }
 
 const mdComponents = {
-  pre: ({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) => (
+  img: ({ src, alt }: { src?: string | Blob; alt?: string }) => (typeof src === 'string' && src ? <ZoomImage src={src} alt={alt} className="max-w-full rounded-lg" /> : null),
+  pre: ({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) => {
+    const code = children as React.ReactElement<{ className?: string; children?: unknown }> | undefined;
+    if (/\blanguage-keuze\b/.test(code?.props?.className ?? '')) {
+      return <ChoiceList src={String(code?.props?.children ?? '')} />;
+    }
+    return plainPre(children, props);
+  },
+};
+
+function plainPre(children: React.ReactNode, props: React.HTMLAttributes<HTMLPreElement>) {
+  return (
     <div className="relative group">
       <pre {...props} className="!mt-2 !mb-2">
         {children}
@@ -181,8 +200,8 @@ const mdComponents = {
         />
       </div>
     </div>
-  ),
-};
+  );
+}
 
 export function MarkdownBlock({ text }: { text: string }) {
   return (
@@ -474,10 +493,14 @@ function StructuredMessage({ events }: { events: StoredEvent[] }) {
 
 /** The user's own text, with @agent mentions glowing like in the composer. */
 function UserText({ text }: { text: string }) {
-  const names = useAgents().map((a) => a.name);
-  const parts = splitMentions(text, names);
+  const agents = useAgents();
+  const parts = splitMentions(text, agents.map((a) => a.name));
   if (parts.length === 1) return <>{text}</>;
-  return <>{parts.map((p, i) => p.mention ? <span key={i} className="mention-glow mention-glow-still">{p.text}</span> : <span key={i}>{p.text}</span>)}</>;
+  // each @agent keeps its own colour, also inside the (green) user bubble
+  return <>{parts.map((p, i) => p.mention
+    ? <span key={i} className="mention-glow mention-glow-still"
+        style={{ '--ag': findAgent(agents, undefined, p.mention)?.color ?? undefined } as React.CSSProperties}>{p.text}</span>
+    : <span key={i}>{p.text}</span>)}</>;
 }
 
 /** Time at the bottom right of a bubble, like WhatsApp (plus the double tick on own messages). */
@@ -524,13 +547,28 @@ function TaskAction({ taskId }: { taskId: string }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, still, sent, flying, agentLinks, calm = true, agentLive }: Props) {
+/** Claude's avatar in a group chat: the real Claude mark on a neutral disc, 30 px (28 on mobile) like everybody's. */
+function ClaudeAv() {
+  return <span className="shared-av shared-av-claude" aria-hidden="true"><ClaudeLogo className="w-[62%] h-[62%]" /></span>;
+}
+
+const MessageBubble = memo(function MessageBubble({ message, still, sent, flying, agentLinks, calm = true, agentLive, members, viewerId }: Props) {
+  const tShared = useTranslations('chat');
   const agentNames = useAgents().map((a) => a.name);
   const isUser = message.role === 'user';
+  // shared project: a question of another member sits on the left in the "other" tint, with avatar and name
+  const sender = isUser && members && members.length > 1 && message.user_id && message.user_id !== viewerId
+    ? (members.find((m) => m.id === message.user_id) ?? { id: message.user_id, name: '?', avatar: null, is_owner: false }) : null;
+  const askedBy = !isUser ? (message.metadata?.asked_by as { id: string; name: string } | undefined) : undefined;
+  const otherAccount = members && members.length > 1 && askedBy && askedBy.id !== viewerId ? askedBy.name : null;
   // live messages carry attachments; from the database they come via metadata
   const atts = (message.attachments ?? (message.metadata?.attachments as Message['attachments']) ?? []);
   const parsedAll = !isUser ? parseStructured(message.content) : null;
   // a delegation (agent in its own workplace) is no part of the bubble: its card comes under it
+  // group chat (shared project): everybody gets an avatar of 30 px; own bubble on the right, Claude with the real logo
+  const shared = !!members && members.length > 1;
+  const me = shared && isUser && !sender ? (members!.find((m) => m.id === viewerId) ?? null) : null;
+  const senderColor = sender ? (sender as { color?: string | null }).color ?? undefined : undefined;
   const delegations = delegationEvents(parsedAll);
   const parsed = delegations.length ? parsedAll!.filter((e) => e.type !== 'delegation') : parsedAll;
   const delegationCards = delegations.length
@@ -611,10 +649,12 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
             );
           }
           return (
-            <div key={i} className="msg-in flex justify-start px-4 md:px-6 py-1.5">
+            <div key={i} className={clsx('msg-in flex justify-start px-4 md:px-6 py-1.5', shared && 'shared-in')}>
+              {shared && <ClaudeAv />}
               {/* only the bubble that carries the time reserves room for it; the others (thinking, activity) end flush */}
               <div className={clsx('wa-bubble wa-in min-w-0 max-w-[92%] md:max-w-[80%]', i === lastMain && 'wa-foot')}>
                 <div className="wa-body">
+                  {shared && i === segments.findIndex((x) => x.kind === 'main') && <p className="shared-name shared-name-claude">Claude</p>}
                   <StructuredMessage events={sg.events} />
                   {i === lastMain && (
                     <div className="wa-foot-row">
@@ -640,10 +680,13 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
   }
 
   return (<>
-    <div data-key={message.clientKey ?? message.id} className={clsx('msg-in group/msg flex px-4 md:px-6 py-1.5', isUser ? 'justify-end' : 'justify-start', still && 'msg-still', sent && 'msg-sent', flying && 'msg-flying')}>
-      <div className={clsx('wa-bubble wa-foot', isUser ? 'wa-out max-w-[85%] md:max-w-[65%]' : 'wa-in min-w-0 max-w-[92%] md:max-w-[80%]')}>
+    <div data-key={message.clientKey ?? message.id} style={senderColor ? ({ '--pc': senderColor } as React.CSSProperties) : undefined} className={clsx('msg-in group/msg flex px-4 md:px-6 py-1.5', isUser && !sender ? 'justify-end' : 'justify-start', shared && 'shared-in', still && 'msg-still', sent && 'msg-sent', flying && 'msg-flying')}>
+      {sender && <span className="shared-av"><UserAvatar size="sm" user={{ avatar: sender.avatar, name: sender.name, email: sender.id }} /></span>}
+      {shared && !isUser && <ClaudeAv />}
+      <div className={clsx('wa-bubble wa-foot', isUser && !sender ? clsx('wa-out max-w-[85%] md:max-w-[65%]', shared && 'wa-own') : sender ? 'wa-in wa-other max-w-[85%] md:max-w-[65%]' : 'wa-in min-w-0 max-w-[92%] md:max-w-[80%]')}>
         {isUser ? (
           <div className="wa-body">
+            {sender && <p className="shared-name">{sender.name}</p>}
             {message.metadata?.auto === 'delegation' && (
               <p className="flex items-center gap-1 text-[11px] font-medium text-(--muted) mb-0.5">
                 <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h14m-5-5 5 5-5 5" /><path d="M4 5v14" /></svg>
@@ -663,14 +706,12 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
               <div className="flex flex-wrap gap-2 mt-2">
                 {atts.map(att =>
                   att.mime_type.startsWith('image/') ? (
-                    <a key={att.id} href={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`} target="_blank" rel="noreferrer">
-                      <img
-                        src={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`}
-                        alt={att.original_name}
-                        loading="lazy"
-                        className="max-h-44 max-w-[240px] rounded-xl object-cover border border-white/10 hover:brightness-110 transition"
-                      />
-                    </a>
+                    <ZoomImage
+                      key={att.id}
+                      src={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`}
+                      alt={att.original_name}
+                      className="max-h-44 max-w-[240px] rounded-xl object-cover border border-white/10 hover:brightness-110 transition"
+                    />
                   ) : (
                     <div key={att.id} className="flex items-center gap-1.5 bg-(--border) rounded-lg px-2 py-1.5 text-xs text-(--muted)">
                       <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -687,7 +728,9 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
           </div>
         ) : (
           <div className="wa-body">
-            {structured ? <StructuredMessage events={structured} /> : <MarkdownBlock text={message.content} />}
+            <ChoiceMsgCtx.Provider value={message.id}>
+              {structured ? <StructuredMessage events={structured} /> : <MarkdownBlock text={message.content} />}
+            </ChoiceMsgCtx.Provider>
             <div className="wa-foot-row">
               <MessageActions
                 text={structured
@@ -696,9 +739,11 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
               />
               <BubbleTime iso={message.created_at} />
             </div>
+            {otherAccount && <p className="shared-acc">{tShared('onAccountOf', { name: otherAccount })}</p>}
           </div>
         )}
       </div>
+      {me && <span className="shared-av"><UserAvatar size="sm" user={{ avatar: me.avatar, name: me.name, email: me.id }} /></span>}
     </div>
     {limitLines}
     {delegationCards}
@@ -738,9 +783,11 @@ export function StreamingBubble({ text, typing }: { text: string; typing?: boole
         <SmoothHeight>
           {has ? (
             <div className="prose prose-sm prose-invert max-w-none stream-prose">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
-                {text}
-              </ReactMarkdown>
+              <ChoiceLiveCtx.Provider value={text}>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
+                  {text}
+                </ReactMarkdown>
+              </ChoiceLiveCtx.Provider>
             </div>
           ) : (
             <span className="typing-dots" aria-label="Claude typt"><i /><i /><i /></span>

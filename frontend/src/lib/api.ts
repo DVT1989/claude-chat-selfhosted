@@ -117,6 +117,32 @@ export const projectsApi = {
   update: (id: string, data: Partial<{ name: string; color: string; instructions: string }>) =>
     request<{ project: import('@/types').Project }>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request(`/projects/${id}`, { method: 'DELETE' }),
+  members: (id: string) => request<{ members: import('@/types').ProjectMember[] }>(`/projects/${id}/members`),
+  candidates: (id: string, q: string) =>
+    request<{ users: Array<{ id: string; name: string; avatar: string | null; email?: string }> }>(`/projects/${id}/candidates?q=${encodeURIComponent(q)}`),
+  addMember: (id: string, userId: string) => request(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify({ userId }) }),
+  removeMember: (id: string, userId: string) => request(`/projects/${id}/members/${userId}`, { method: 'DELETE' }),
+  connectors: (id: string) => request<{ connectors: Array<{ id: string; name: string; type: string; shared: boolean; mine?: boolean; by?: string | null }> }>(`/projects/${id}/connectors`),
+  setConnectors: (id: string, connectorIds: string[]) => request(`/projects/${id}/connectors`, { method: 'PUT', body: JSON.stringify({ connectorIds }) }),
+  setColor: (id: string, userId: string, color: string) =>
+    request<{ members: import('@/types').ProjectMember[]; palette: string[] }>(`/projects/${id}/members/${userId}/color`, { method: 'PUT', body: JSON.stringify({ color }) }),
+  agents: (id: string) => request<{ agents: import('@/types').ProjectAgent[]; can_edit: boolean; me: string }>(`/projects/${id}/agents`),
+  setAgent: (id: string, agentId: string, b: { inProject: boolean; userIds: string[]; accountMode?: 'user' | 'owner'; fallback?: boolean }) =>
+    request<{ agents: import('@/types').ProjectAgent[] }>(`/projects/${id}/agents/${agentId}`, { method: 'PUT', body: JSON.stringify(b) }),
+  setAgentAccount: (id: string, agentId: string, b: { accountMode: 'user' | 'owner'; fallback: boolean }) =>
+    request<{ agents: import('@/types').ProjectAgent[] }>(`/projects/${id}/agents/${agentId}/account`, { method: 'PUT', body: JSON.stringify(b) }),
+  memory: (id: string) => request<{ memories: import('@/types').ProjectMemoryItem[] }>(`/projects/${id}/memory`),
+  addMemory: (id: string, b: { content: string; topic?: string; pinned?: boolean }) =>
+    request<{ memories: import('@/types').ProjectMemoryItem[] }>(`/projects/${id}/memory`, { method: 'POST', body: JSON.stringify(b) }),
+  updateMemory: (id: string, mid: string, b: Partial<{ content: string; topic: string; pinned: boolean }>) =>
+    request<{ memories: import('@/types').ProjectMemoryItem[] }>(`/projects/${id}/memory/${mid}`, { method: 'PATCH', body: JSON.stringify(b) }),
+  deleteMemory: (id: string, mid: string) =>
+    request<{ memories: import('@/types').ProjectMemoryItem[] }>(`/projects/${id}/memory/${mid}`, { method: 'DELETE' }),
+  events: (id: string, before?: string) =>
+    request<{ events: import('@/types').ProjectEvent[]; next: string | null }>(`/projects/${id}/events?limit=30${before ? `&before=${before}` : ''}`),
+  unread: () => request<{ unread: Record<string, number> }>('/projects/unread'),
+  markRead: (convId: string) => request(`/projects/read/${convId}`, { method: 'POST' }),
+  typing: (convId: string) => request(`/conversations/${convId}/typing`, { method: 'POST' }),
 };
 
 // ── Conversations ─────────────────────────────────────────────

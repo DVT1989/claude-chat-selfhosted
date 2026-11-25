@@ -6,6 +6,7 @@ import { join } from 'path';
 import { getUserWorkspace } from '../services/claudeCode';
 import { randomUUID } from 'crypto';
 
+import { convAccess } from '../services/sharedProjects';
 const router = Router();
 router.use(requireAuth);
 
@@ -19,10 +20,7 @@ router.post('/:conversationId/attachments', async (req: Request, res: Response) 
       return res.status(400).json({ error: 'fileName, mimeType, data required' });
     }
 
-    const conv = await query(
-      "SELECT id FROM conversations WHERE id = $1 AND user_id = $2 AND status != 'deleted'",
-      [conversationId, userId]
-    );
+    const conv = { rows: (await convAccess(conversationId, userId)) ? [1] : [] };
     if (conv.rows.length === 0) return res.status(404).json({ error: 'Conversation not found' });
 
     const buffer = Buffer.from(data, 'base64');

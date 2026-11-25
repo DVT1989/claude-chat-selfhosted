@@ -7,6 +7,8 @@ import { scheduleResume, cancelScheduledResume, getScheduledResumeTime, getSched
 import { broadcastSse } from '../services/sseEvents';
 import { messagePreview } from '../services/preview';
 
+import { convAccess, projectAccess, projectMembers } from '../services/sharedProjects';
+
 export const conversationsRouter = Router();
 conversationsRouter.use(requireAuth);
 
@@ -18,11 +20,11 @@ conversationsRouter.get('/', async (req: Request, res: Response, next) => {
 
     const result = await query<{
       id: string; title: string; model: string; status: string;
-      provider_account_id: string | null; token_count: number; project_id: string | null;
+      provider_account_id: string | null; token_count: number; project_id: string | null; user_id: string;
       updated_at: string; created_at: string;
       last_role: string | null; last_tail: string | null;
     }>(
-      `SELECT c.id, c.title, c.model, c.status, c.provider_account_id,
+      `SELECT c.id, c.title, c.model, c.status, c.provider_account_id, c.user_id,
               c.token_count, c.project_id, c.updated_at, c.created_at,
               lm.role AS last_role, lm.tail AS last_tail
        FROM conversations c
@@ -34,7 +36,11 @@ conversationsRouter.get('/', async (req: Request, res: Response, next) => {
          ORDER BY m.created_at DESC
          LIMIT 1
        ) lm ON true
-       WHERE c.user_id = $1 AND c.status != 'deleted'
+       LEFT JOIN projects pj ON pj.id = c.project_id
+       WHERE c.status != 'deleted'
+         -- own loose chats, plus every chat of a project that is mine or that I am a member of
+         AND ((c.project_id IS NULL AND c.user_id = $1) OR pj.user_id = $1
+              OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = c.project_id AND pm.user_id = $1))
          -- the admin system conversation lives under Settings → Admin-chat, not in the chat list
          AND COALESCE((c.metadata->>'isSystem')::boolean, false) = false
          -- Claude sessions on a device live in that device's activity log, not in the chat list
@@ -72,14 +78,17 @@ conversationsRouter.get('/:id', async (req: Request, res: Response, next) => {
     }>(
       `SELECT id, user_id, title, model, status, provider_account_id,
               token_count, metadata, updated_at, created_at
-       FROM conversations WHERE id = $1 AND user_id = $2`,
-      [id, req.user!.userId],
+       FROM conversations WHERE id = $1`,
+      [id],
     );
 
-    if (!convResult.rows[0]) throw new AppError(404, 'Conversation not found');
+    // own chat, or a chat of a project the user is a member of; anyone else gets a 404
+    const acc = await convAccess(id, req.user!.userId);
+    if (!convResult.rows[0] || !acc) throw new AppError(404, 'Conversation not found');
+    const members = acc.projectId && acc.shared ? await projectMembers(acc.projectId) : null;
 
     const messagesResult = await query(
-      `SELECT id, conversation_id, role, content, token_count, metadata, created_at
+      `SELECT id, conversation_id, role, content, token_count, metadata, created_at, user_id
        FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
       [id],
     );
@@ -95,6 +104,8 @@ conversationsRouter.get('/:id', async (req: Request, res: Response, next) => {
       conversation: convResult.rows[0],
       messages: messagesResult.rows,
       connectors: connectorsResult.rows,
+      project_id: acc.projectId,
+      members: members?.map((m) => ({ id: m.id, name: m.name, avatar: m.avatar && m.avatar.length < 60000 ? m.avatar : null, is_owner: m.is_owner })) ?? null,
     });
   } catch (err) {
     next(err);
@@ -125,8 +136,7 @@ conversationsRouter.post('/', async (req: Request, res: Response, next) => {
     }
 
     if (body.projectId) {
-      const pr = await query('SELECT id FROM projects WHERE id = $1 AND user_id = $2', [body.projectId, req.user!.userId]);
-      if (!pr.rows[0]) throw new AppError(404, 'Project not found');
+      if (!await projectAccess(body.projectId, req.user!.userId)) throw new AppError(404, 'Project not found');
     }
 
     const result = await query<{
@@ -202,9 +212,11 @@ conversationsRouter.put('/:id', async (req: Request, res: Response, next) => {
     const body = schema.parse(req.body);
     const { id } = req.params as Record<string, string>;
 
-    // Verify ownership
-    const owned = await query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [id, req.user!.userId]);
-    if (!owned.rows[0]) throw new AppError(404, 'Conversation not found');
+    // Verify access: own chat, or any chat of a project the user belongs to
+    const acc = await convAccess(id, req.user!.userId);
+    if (!acc) throw new AppError(404, 'Conversation not found');
+    const mine = acc.ownerId === req.user!.userId;
+    if (body.connectorIds !== undefined && !mine) throw new AppError(403, 'Alleen de maker past de koppelingen van dit gesprek aan');
 
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -214,9 +226,13 @@ conversationsRouter.put('/:id', async (req: Request, res: Response, next) => {
     if (body.model !== undefined) { updates.push(`model = $${idx++}`); values.push(body.model); }
     if (body.status !== undefined) { updates.push(`status = $${idx++}`); values.push(body.status); }
     if (body.projectId !== undefined) {
+      // taking a chat out of a shared project (or moving it to another project) is blocked: the others still use it
+      if (acc.projectId && acc.shared && body.projectId !== acc.projectId) {
+        throw new AppError(409, 'Een chat in een gedeeld project kan er niet meer uit: de andere leden gebruiken hem');
+      }
       if (body.projectId) {
-        const pr = await query('SELECT id FROM projects WHERE id = $1 AND user_id = $2', [body.projectId, req.user!.userId]);
-        if (!pr.rows[0]) throw new AppError(404, 'Project not found');
+        if (!mine && body.projectId !== acc.projectId) throw new AppError(403, 'Alleen de maker zet een eigen gesprek in een project');
+        if (!await projectAccess(body.projectId, req.user!.userId)) throw new AppError(404, 'Project not found');
       }
       updates.push(`project_id = $${idx++}`); values.push(body.projectId);
     }
@@ -245,8 +261,10 @@ conversationsRouter.put('/:id', async (req: Request, res: Response, next) => {
 // Delete conversation
 conversationsRouter.delete('/:id', async (req: Request, res: Response, next) => {
   try {
+    // the writer, or the owner of the project the chat is in
     const result = await query(
-      "UPDATE conversations SET status = 'deleted' WHERE id = $1 AND user_id = $2",
+      `UPDATE conversations c SET status = 'deleted' WHERE c.id = $1
+         AND (c.user_id = $2 OR EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.user_id = $2))`,
       [String(req.params.id), req.user!.userId],
     );
     if (result.rowCount === 0) throw new AppError(404, 'Conversation not found');

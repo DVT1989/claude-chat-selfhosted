@@ -143,8 +143,9 @@ const CHAT_RULES = [
  * path, or null when there are none. The file sits in the user's own (private) home, not in argv,
  * so the prompts do not show up in the process list.
  */
-export async function writeAgentsFile(userId: string, home: string, uid: number, gid: number): Promise<{ path: string; agents: Agent[] } | null> {
-  const agents = (await listAgents(userId)).filter((a) => a.is_active);
+export async function writeAgentsFile(userId: string, home: string, uid: number, gid: number, only?: Agent[]): Promise<{ path: string; agents: Agent[] } | null> {
+  // shared project: only the agents the project allows this asker (also when that is none)
+  const agents = only ?? (await listAgents(userId)).filter((a) => a.is_active);
   if (!agents.length) return null;
   const def: Record<string, { description: string; prompt: string; model?: string }> = {};
   for (const a of agents) {

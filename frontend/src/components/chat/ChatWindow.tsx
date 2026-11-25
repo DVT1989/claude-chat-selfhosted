@@ -5,6 +5,7 @@ import ChromePanelButton from './ChromePanelButton';
 import { Fragment, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent } from 'react';
 import { useChatStore, useAuthStore } from '@/lib/store';
 import { conversations as convApi, type QueuedMessage } from '@/lib/api';
+import { ChoiceCtx } from './ChoiceList';
 import MessageBubble, { SmoothHeight, StreamingBubble, ToolCallBlock, linkResumes } from './MessageBubble';
 import { AgentBubble, type AgentStep, type AgentWait, useAgents, findAgent, deriveChain } from './AgentBubble';
 import { DelegationCard, type DelegationEvent } from './DelegationCard';
@@ -13,8 +14,8 @@ import ConvAvatar from '@/components/ConvAvatar';
 import UsageMeter, { USAGE_REFRESH_EVENT } from '@/components/UsageMeter';
 import LiveStatus from './LiveStatus';
 import { LimitNotice, type LimitStatus } from './LimitNotice';
-import type { Message } from '@/types';
-import { attachments as attachmentsApi, models as modelsApi } from '@/lib/api';
+import type { Message, ProjectMember } from '@/types';
+import { attachments as attachmentsApi, models as modelsApi, projectsApi } from '@/lib/api';
 import type { Attachment, ModelOption } from '@/types';
 import clsx from 'clsx';
 import { useTranslations } from '@/lib/i18n';
@@ -230,6 +231,26 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   const addSessionCost = useChatStore(s => s.addSessionCost);
   const addSessionTokens = useChatStore(s => s.addSessionTokens);
   const refreshConversationId = useChatStore(s => s.refreshConversationId);
+  // shared project: members of this chat (empty for a private chat), and who is typing right now
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [typers, setTypers] = useState<Record<string, { name: string; at: number }>>({});
+  const viewerId = useAuthStore(s => s.user?.id ?? '');
+  const lastTypingSent = useRef(0);
+  useEffect(() => {
+    if (members.length < 2) return;
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ userId: string; conversationId: string; name: string }>).detail;
+      if (d.conversationId !== conversationId) return;
+      setTypers((t) => ({ ...t, [d.userId]: { name: d.name, at: Date.now() } }));
+    };
+    window.addEventListener('cc:typing', on);
+    const iv = setInterval(() => setTypers((t) => {
+      const keep = Object.entries(t).filter(([, v]) => Date.now() - v.at < 5000);
+      return keep.length === Object.keys(t).length ? t : Object.fromEntries(keep);
+    }), 1500);
+    return () => { window.removeEventListener('cc:typing', on); clearInterval(iv); };
+  }, [members.length, conversationId]);
+  const typingNames = Object.values(typers).map((v) => v.name);
   const setRefreshConversationId = useChatStore(s => s.setRefreshConversationId);
   const allMessages = messages_map;
 
@@ -370,6 +391,12 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   const [quiet, setQuiet] = useState(true);
 
   const messages = allMessages[conversationId] ?? initialMessages;
+  const msgCount = messages.length;
+  useEffect(() => {
+    if (members.length < 2 || document.visibilityState !== 'visible') return;
+    const h = setTimeout(() => { void projectsApi.markRead(conversationId).then(() => window.dispatchEvent(new Event('cc:read'))).catch(() => {}); }, 400);
+    return () => clearTimeout(h);
+  }, [members.length, msgCount, conversationId]);
 
   useEffect(() => {
     setMessages(conversationId, initialMessages);
@@ -477,6 +504,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   }, [conversationId]);
 
   // "Verder" on an interrupted agent bubble: send the follow-up as a normal message
+  const choiceCtx = useMemo(() => ({ messages }), [messages]);
   const sendRef = useRef<(t: string) => void>(() => {});
   sendRef.current = (t: string) => { void sendMessage(t); };
   useEffect(() => {
@@ -580,7 +608,9 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
 
   // Load conversation model when conversation changes
   useEffect(() => {
-    convApi.get(conversationId).then(({ conversation }) => {
+    convApi.get(conversationId).then((res) => {
+      const { conversation } = res;
+      setMembers((res as unknown as { members?: ProjectMember[] | null }).members ?? []);
       const m = conversation?.model ?? '';
       // Treat legacy default 'claude-opus-4-5' as unset → use user/system default
       setConvModel(m && m !== 'claude-opus-4-5' ? m : '');
@@ -1380,12 +1410,20 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
           </div>
         )}
 
+        <ChoiceCtx.Provider value={choiceCtx}>
         {messages
           .filter(msg => msg !== livePartial(messages))
           .map((msg) => (
             <MessageBubble key={msg.clientKey ?? msg.id} message={msg} still={msg.id === swapId} sent={msg.id === sentId || (!!msg.clientKey && msg.clientKey === sentId)} flying={!!flyId && (msg.id === flyId || msg.clientKey === flyId)}
-              agentLinks={agentLinks.links} calm={!isStreaming} />
+              agentLinks={agentLinks.links} calm={!isStreaming} members={members} viewerId={viewerId} />
           ))}
+        </ChoiceCtx.Provider>
+
+        {typingNames.length > 0 && (
+          <div className="shared-typing px-4 md:px-6 py-1 text-[12px] text-(--muted)" aria-live="polite">
+            {typingNames.join(', ')} {tr('typing')}<span className="shared-dots" aria-hidden><i /><i /><i /></span>
+          </div>
+        )}
 
         {/* Thinking block during streaming */}
         {isStreaming && thinkingText && (
@@ -1581,7 +1619,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
             ref={textareaRef}
             aria-label={tr('messageLabel')}
             value={input}
-            onChange={(e) => { setInput(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
+            onChange={(e) => { setInput(e.target.value); if (members.length > 1 && e.target.value && Date.now() - lastTypingSent.current > 3000) { lastTypingSent.current = Date.now(); void projectsApi.typing(conversationId).catch(() => {}); } setCaret(e.target.selectionStart ?? e.target.value.length); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onBlur={() => setMentionClosed(mentionTok?.start ?? null)}
             onFocus={() => setMentionClosed(null)}

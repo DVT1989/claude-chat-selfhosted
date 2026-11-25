@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'child_process';
 import { languageLabel } from './i18n';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, rmSync, symlinkSync, readlinkSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, chownSync, chmodSync, cpSync, readdirSync, lstatSync, unlinkSync, rmSync, symlinkSync, readlinkSync, renameSync } from 'fs';
 import { join } from 'path';
 import { randomBytes, createHash } from 'crypto';
 import { config } from '../config';
@@ -34,6 +34,12 @@ const BEHAVIOR_RULES = [
   '- Sla het nooit op in memory, lessen, commits, logs of antwoorden.',
   '- Stel de gebruiker voor er een koppeling van te maken (Instellingen > Koppelingen): dan staat het versleuteld opgeslagen.',
   '- Heeft de gebruiker een koppeling met wachtwoord, gebruik dan de bestanden en voorbeelden van die koppeling.',
+  '',
+  '# Keuzelijsten',
+  '',
+  'Laat je de gebruiker kiezen uit twee of meer opties, schrijf dan geen platte [ ]-lijst maar een codeblok ```keuze (de chat toont het als aanvinkbare kaart). Dit is de enige uitzondering op "geen markdown".',
+  'Eerste regel `titel: ...`, dan `modus: meer` (meerdere keuzes) of `modus: een` (een keuze, 2 tot 8 opties), optioneel `## Groep` (alleen bij meer dan een groep), dan per optie `nr | label | hint` (hint mag weg). Nummers doorlopend en uniek, max 60. Een `*` achter het nummer (`2* | Licenties`) = voorgeselecteerd.',
+  'Stel de vraag in een zin boven het blok en herhaal de opties daarna niet. De gebruiker antwoordt met een bericht dat begint met `Gekozen bij "<titel>"` (met nummers en labels) of `Gekozen: <label>`.',
   '',
 ].join('\n') + '\n\n';
 
@@ -79,7 +85,46 @@ export function getProjectDir(userId: string, projectId: string): string {
   return join(getUserWorkspace(userId), 'projects', projectId);
 }
 
-export interface ProjectInfo { id: string; name: string; instructions: string }
+/** shared: set when the project has members; files live in one dir that every member's run may write (all runs here share one OS user, so the gid is only the shared marker) */
+export interface ProjectInfo { id: string; name: string; instructions: string; shared?: { gid: number; ownerId: string } | null }
+
+export function getSharedProjectDir(projectId: string): string {
+  return join(config.workspaceRoot, '_projects', projectId);
+}
+
+/** Group rights of the shared project dir: files made by any member stay readable and writable for all members. */
+export function fixSharedProjectPerms(projectId: string, gid: number): void {
+  const dir = getSharedProjectDir(projectId);
+  try {
+    if (!existsSync(dir)) return;
+    execFileSync('chown', ['-R', '-h', `${CLAUDE_UID}:${CLAUDE_GID}`, dir]);
+    execFileSync('chmod', ['-R', 'g+rwX', dir]);
+    execFileSync('find', [dir, '-type', 'd', '-exec', 'chmod', 'g+s', '{}', '+']);
+  } catch (e) { console.error('[project] shared perms failed:', (e as Error).message); }
+}
+
+function ensureSharedDir(userId: string, p: ProjectInfo): string {
+  const sh = p.shared!;
+  const root = join(config.workspaceRoot, '_projects');
+  const dir = getSharedProjectDir(p.id);
+  if (!existsSync(root)) mkdirSync(root, { recursive: true, mode: 0o755 });
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o2770 });
+    // existing files of the owner's private project dir move into the shared dir (once)
+    const old = join(getUserWorkspace(sh.ownerId), 'projects', p.id);
+    try {
+      for (const n of readdirSync(old)) {
+        const src = join(old, n);
+        if (n === 'CLAUDE.md' || lstatSync(src).isSymbolicLink()) continue;
+        renameSync(src, join(dir, n));
+      }
+    } catch { /* no old dir */ }
+  }
+  chownSync(dir, CLAUDE_UID, CLAUDE_GID);
+  chmodSync(dir, 0o2770);
+  fixSharedProjectPerms(p.id, sh.gid);
+  return dir;
+}
 
 /**
  * Shared working dir of a project: <workspace>/projects/<id>. The project instructions are its CLAUDE.md
@@ -809,14 +854,17 @@ function historyNote(workspace: string): string {
 function lessonsSection(workspace: string, conn: ConnectorConfig): string[] {
   const token = conn.credentials.token as string | undefined;
   const list = (conn.config.lessons as Array<{ topic: string; lesson: string }> | undefined) ?? [];
-  const out: string[] = ['## Geheugen: gedeelde kennis en eigen memory'];
+  const forProject = !!conn.credentials.projectMemoryToken;
+  const out: string[] = [forProject ? '## Gedeelde kennis' : '## Geheugen: gedeelde kennis en eigen memory'];
   if (list.length) {
     out.push('Lessen die eerder zijn geleerd over deze app en de koppelingen (geldt voor iedereen):');
     for (const l of list) out.push(`- [${l.topic}] ${l.lesson}`);
   }
+  if (!forProject) {
   out.push('Twee soorten onthouden, strikt gescheiden:');
   out.push('- Gedeelde kennis: alleen technisch, over hoe de app of een koppeling werkt. Ging iets fout en vond je uit hoe het wel moet (een commando, pad, recht, beperking, werkwijze), sla het dan op als les. Kort, algemeen, één regel. Nooit namen, e-mailadressen, mailinhoud, klant- of bedrijfsgegevens, wachtwoorden, ID\'s van tenants of apparaten.');
   out.push('- Eigen geheugen (database van deze gebruiker, zie hieronder): alles wat persoonlijk is: wie de gebruiker is, voorkeuren, mailboxen, contacten, klanten, tenants, apparaten, afspraken, lopende projecten. Nooit in de gedeelde kennis.');
+  }
   if (token) {
     const tokenFile = '.lessons.token';
     writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
@@ -843,7 +891,7 @@ function budgetedLessonsSection(workspace: string, conn: ConnectorConfig, otherC
   const limit = budget * CHARS_PER_TOKEN;
   const cfg = conn.config as Parameters<typeof trimStep>[0];
   const trimmed: string[] = [];
-  const render = () => ({ les: lessonsSection(workspace, conn), mem: memorySection(workspace, conn, trimmed.length > 0, compact) });
+  const render = () => ({ les: lessonsSection(workspace, conn), mem: conn.credentials.projectMemoryToken ? projectMemorySection(workspace, conn, trimmed.length > 0, compact) : memorySection(workspace, conn, trimmed.length > 0, compact) });
   let r = render();
   const size = () => otherChars + r.les.join('\n').length + r.mem.join('\n').length;
   for (let i = 0; i < 60 && size() > limit; i++) {
@@ -853,6 +901,41 @@ function budgetedLessonsSection(workspace: string, conn: ConnectorConfig, otherC
     r = render();
   }
   return { lines: [...r.les, ...r.mem], stats: { memoryChars: r.mem.join('\n').length, lessonsChars: r.les.join('\n').length, trimmed, budget } };
+}
+
+/**
+ * Run in a shared project: only the project memory (database, per project). No personal memory, no history search,
+ * no tasks or delegation, no lessons token: the project token is valid for this project's memory (and render) only
+ * (services/sharedProjects.ts scopeForProjectToken; enforced in the API, not in this text).
+ */
+function projectMemorySection(workspace: string, conn: ConnectorConfig, trimmed = false, compact = false): string[] {
+  const token = conn.credentials.projectMemoryToken as string | undefined;
+  if (!token) return [];
+  const m = conn.config.projectMemory as { core: Array<{ id: string; topic: string; content: string }>; topics: Array<{ topic: string; count: number }>; total: number } | undefined;
+  const tokenFile = '.memory.token';
+  writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
+  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  try { unlinkSync(join(workspace, '.lessons.token')); } catch { /* none */ }
+  const out: string[] = ['## Projectgeheugen (database)'];
+  out.push('Dit is het geheugen van dit gedeelde project, door alle leden te bewerken. Alleen dit geheugen is voor jou beschikbaar: het persoonlijke geheugen van de vrager of de eigenaar en het geheugen van andere projecten krijg je niet en lees je niet uit bestanden in een home (~/.claude/projects/*/memory). Zet er niets van elders in.');
+  out.push('- Zoek eerst (kernwoorden) voordat je iets uitzoekt of vraagt over klanten, afspraken of eerdere keuzes in dit project.');
+  out.push('- Sla op wat voor dit project bij een volgende vraag zoekwerk scheelt: een feit per item, kort en op zichzelf leesbaar, topic klant, afspraak, technisch of algemeen. Alleen projectkennis: niets over de vrager persoonlijk. Nooit wachtwoorden of geheimen.');
+  out.push('- Klopt een feit niet meer: bijwerken (PATCH). Onjuist: verwijderen. Technische regels (hoe iets werkt) krijgen topic technisch: de leden kunnen die na bevestiging naar de gedeelde lessen sturen; sla ze zelf niet op in de gedeelde lessen.');
+  if (compact) out.push('Zoek in het geheugen met kernwoorden (API hieronder); de vaste kern staat in deze werkplek niet in de instructies.');
+  else if (m?.total) {
+    out.push(`Kern (${m.core.length} van ${m.total}; topics: ${m.topics.map((t) => `${t.topic} ${t.count}`).join(', ')}):`);
+    for (const c of m.core) out.push(`- [${c.topic}] ${c.content.replace(/\s+/g, ' ').slice(0, 300)}`);
+    if (trimmed) out.push('(Kern ingekort voor het tokenbudget: zoek de rest op met de API hieronder.)');
+  } else out.push('Het projectgeheugen is nog leeg.');
+  out.push('```bash');
+  out.push(`MT() { echo "x-memory-token: $(cat ~/${tokenFile} 2>/dev/null || cat ${tokenFile})"; }`);
+  out.push(`curl -s -H "$(MT)" -G --data-urlencode "q=klant" http://127.0.0.1:4000/projects/claude/memory      # zoeken (optioneel &limit=15)`);
+  out.push(`curl -s -H "$(MT)" -H "Content-Type: application/json" http://127.0.0.1:4000/projects/claude/memory -d '{"topic":"klant","content":"...","pinned":false}'   # opslaan`);
+  out.push(`curl -s -X PATCH -H "$(MT)" -H "Content-Type: application/json" http://127.0.0.1:4000/projects/claude/memory/ID -d '{"content":"..."}'   # bijwerken`);
+  out.push(`curl -s -X DELETE -H "$(MT)" http://127.0.0.1:4000/projects/claude/memory/ID   # verwijderen`);
+  out.push('```');
+  out.push('');
+  return out;
 }
 
 /** The user's own memory in the database: shared by all Claude sessions and accounts of this user. */
@@ -1365,6 +1448,11 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     lines.push('- Alles is alleen-lezen, BEHALVE Intune-apps toevoegen en toewijzen.');
     lines.push('- Een app toevoegen of toewijzen doe je pas nadat de gebruiker in dit gesprek expliciet "ja" heeft gezegd op een voorstel met: app, groep, intent (required/available).');
     lines.push('- Nooit mail versturen, verwijderen of verplaatsen, en geen bestanden wijzigen.');
+    const ro = Array.isArray(conn.config.readOnlyAgents) ? (conn.config.readOnlyAgents as string[]) : [];
+    const none = Array.isArray(conn.config.noAccessAgents) ? (conn.config.noAccessAgents as string[]) : [];
+    if (none.length) lines.push(`- Deze agents hebben geen toegang tot deze tenant: ${none.join(', ')}. Geef ze geen Microsoft 365-gegevens of -opdrachten voor deze tenant en geef ze het token niet. Dit wordt ook technisch afgedwongen: hun aanroepen naar het token of Graph worden geblokkeerd.`);
+    if (ro.length) lines.push(`- Deze agents staan op Lezen voor deze tenant: ${ro.join(', ')}. Geef ze geen schrijfopdrachten voor Microsoft 365 en voer geen schrijfactie uit voor hen.`);
+    if (conn.config.m365Mode === 'read') lines.push('- Deze run heeft alleen Lezen voor deze tenant: voer geen schrijfacties uit (ook geen Intune-apps).');
     lines.push('');
   }
 
@@ -1605,7 +1693,8 @@ export async function runTask(
   let appendPrompt = opts.appendSystemPrompt ?? '';
   try {
     const { writeAgentsFile, agentsSystemPrompt } = await import('./agents');
-    const written = await writeAgentsFile(userId, home, 1001, opts.privileged ? 0 : 1001);
+    const projAgents = opts.project?.shared ? await import('./sharedProjects').then((m) => m.projectRunAgents(opts.project!.id, userId)) : undefined;
+    const written = await writeAgentsFile(userId, home, 1001, opts.privileged ? 0 : 1001, projAgents);
     if (written) {
       args.push('--agents', written.path);
       for (const a of written.agents) agentBySlug.set(a.slug, { id: a.id, name: a.name });
@@ -1613,6 +1702,21 @@ export async function runTask(
     }
   } catch (err) {
     console.error('[agents] could not load agents:', err);
+  }
+
+  // Microsoft 365: subagents share the workspace (and so the Graph token file) with the main Claude. A PreToolUse hook
+  // blocks subagents that have no access (opt-in, config.agent_access on the tenant) from the token and Graph.
+  {
+    const tenants = (connectors ?? []).filter((c) => c.type === 'm365').map((c) => {
+      const raw = (c.config.agent_access ?? {}) as Record<string, string>;
+      const access: Record<string, 'read' | 'write'> = {};
+      for (const [slug, a] of agentBySlug) if (raw[a.id] === 'read' || raw[a.id] === 'write') access[slug] = raw[a.id] as 'read' | 'write';
+      return { alias: c.name.replace(/[^a-zA-Z0-9_-]/g, '_'), access };
+    });
+    if (tenants.length) {
+      const cmd = `node ${join(__dirname, '..', 'hooks', 'm365Guard.js')} ${Buffer.from(JSON.stringify({ tenants })).toString('base64')}`;
+      args.push('--settings', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash|Read|Grep|Glob|WebFetch', hooks: [{ type: 'command', command: cmd, timeout: 10 }] }] } }));
+    }
   }
 
   // Skills that admins share with everyone (links to the owner's folder; own skills win)

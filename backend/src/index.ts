@@ -18,6 +18,8 @@ import { conversationsRouter } from './routes/conversations';
 import { projectsRouter } from './routes/projects';
 import { streamRouter, resumeQueues, resumeAfterRestart } from './routes/stream';
 import { ensureQueueSchema } from './services/messageQueue';
+import { ensureSharedProjectSchema } from './services/sharedProjects';
+import { startProjectMemoryWatcher } from './services/projectMemoryFile';
 import { ensureDeviceSchema } from './services/devices';
 import { ensureTransferSchema, startTransferSweeper } from './services/fileTransfers';
 import { devicesRouter, resumeDeviceTasks } from './routes/devices';
@@ -235,6 +237,14 @@ async function start() {
     await ensureTranslationsTable();
     await ensureNasPasswordTables();
     await ensureSettingsTable();
+    // Microsoft 365 became opt-in per agent (config.agent_access: agent id -> read|write). Once: every existing agent of the
+    // owner keeps access, as Lezen (the old situation was nearly read-only), so nobody loses access unnoticed.
+    await pool.query(`UPDATE connectors c SET config = c.config || jsonb_build_object('agent_access_v', 2, 'agent_access',
+        COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each_text(COALESCE(c.config->'agent_access', '{}'::jsonb)) AS e(k, v) WHERE v IN ('read', 'write')), '{}'::jsonb)
+        || COALESCE((SELECT jsonb_object_agg(a.id::text, 'read') FROM agents a WHERE a.user_id = c.user_id
+                      AND NOT (COALESCE(c.config->'agent_access', '{}'::jsonb) ? a.id::text)
+                      AND COALESCE(c.config->'agent_access'->>a.id::text, '') <> 'none'), '{}'::jsonb))
+      WHERE c.type = 'm365' AND COALESCE((c.config->>'agent_access_v')::int, 0) < 2`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversation_attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -307,6 +317,7 @@ async function start() {
     await ensureWhatsAppSchema();
     await ensureMessengerSchema();
     await ensureQueueSchema();
+    await ensureSharedProjectSchema();
     await ensureDeviceSchema();
     await ensureTransferSchema();
     startTransferSweeper();
@@ -371,6 +382,7 @@ async function start() {
   });
 
   startScheduler();
+  startProjectMemoryWatcher();
   startTaskScheduler();
   startFederationScheduler();
   startConsultScheduler();

@@ -5,7 +5,7 @@
  */
 import { query } from '../db';
 
-export interface QueuedMessage { id: string; content: string; created_at: string; attachment_ids: string[] }
+export interface QueuedMessage { id: string; content: string; created_at: string; attachment_ids: string[]; user_id?: string; user_name?: string | null }
 
 export async function ensureQueueSchema(): Promise<void> {
   await query(`
@@ -23,7 +23,7 @@ export async function ensureQueueSchema(): Promise<void> {
 
 export async function listQueue(conversationId: string): Promise<QueuedMessage[]> {
   const r = await query<QueuedMessage>(
-    'SELECT id, content, created_at, attachment_ids FROM message_queue WHERE conversation_id = $1 ORDER BY sort, created_at',
+    'SELECT q.id, q.content, q.created_at, q.attachment_ids, q.user_id, u.name AS user_name FROM message_queue q LEFT JOIN users u ON u.id = q.user_id WHERE q.conversation_id = $1 ORDER BY q.sort, q.created_at',
     [conversationId]);
   return r.rows;
 }

@@ -8,6 +8,7 @@ import clsx from 'clsx';
 import { AgentAvatar, setAgentsCache } from '@/components/chat/AgentBubble';
 import AgentWizard from '@/components/agents/AgentWizard';
 import ClaudeLogo from '@/components/ClaudeLogo';
+import { M365LevelSeg, type M365Level } from '@/components/M365Level';
 
 const field = 'w-full px-3.5 py-2.5 rounded-control bg-(--input) border border-(--border) text-(--text) text-sm placeholder-(--muted) outline-none focus:border-(--accent) transition-colors';
 const COLORS = ['#6366f1', '#a855f7', '#ec4899', '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#0ea5e9', '#64748b'];
@@ -307,6 +308,88 @@ function TrainPanel({ agent }: { agent: AgentDef }) {
 
 
 /** Admins: who may use this agent. Saves on every change; shared agents run with each user's own account. */
+interface M365Tenant { id: string; name: string; is_active: boolean; config: { tenantName?: string; account?: string; agent_access?: Record<string, M365Level> } }
+async function m365Api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api/m365${path}`, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...init });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  return data as T;
+}
+const m365Icon = <><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></>;
+
+/** Koppelingen of this agent: one row per Microsoft 365 tenant with a switch (the switch is the access, opt-in); level Lezen (default) or Lezen en schrijven. */
+function ConnectorsPanel({ agent }: { agent: AgentDef }) {
+  const [open, setOpen] = useState(false);
+  const [tenants, setTenants] = useState<M365Tenant[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (open && !tenants) m365Api<{ tenants: M365Tenant[] }>('/tenants').then((r) => setTenants(r.tenants.filter((t) => t.is_active))).catch((e) => setErr((e as Error).message));
+  }, [open, tenants]);
+  const levelOf = (t: M365Tenant) => t.config.agent_access?.[agent.id];
+  async function save(t: M365Tenant, level: M365Level | null) {
+    const next = { ...(t.config.agent_access ?? {}) };
+    if (level) next[agent.id] = level; else delete next[agent.id];
+    setBusy(true); setErr('');
+    try {
+      await m365Api(`/tenants/${t.id}/access`, { method: 'PUT', body: JSON.stringify({ access: next }) });
+      setTenants((l) => (l ?? []).map((x) => (x.id === t.id ? { ...x, config: { ...x.config, agent_access: next } } : x)));
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  const nOn = tenants ? tenants.filter((t) => levelOf(t)).length : null;
+  return (
+    <div className="px-4 pb-3 -mt-1">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="tr-line flex items-center gap-1.5 text-xs text-(--muted) hover:text-(--text) transition-colors">
+        <svg className={clsx('tr-chev w-3.5 h-3.5', open && 'is-open')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+        Koppelingen{nOn !== null ? `: ${nOn} aan` : ''}
+      </button>
+      <div className={clsx('ll-fold', !open && 'is-shut')} inert={!open}>
+        <div>
+          <div className="pt-2">
+            <p className="text-xs text-(--muted)">Waar {agent.name} bij mag. Zet een koppeling aan om toegang te geven; standaard alleen lezen.</p>
+            {!tenants && !err && <div className="h-11 rounded-xl bg-(--bg) animate-pulse mt-2" />}
+            {tenants && !tenants.length && <p className="text-xs text-(--muted) mt-2">Je hebt nog geen Microsoft 365-tenant gekoppeld.</p>}
+            {tenants && !!tenants.length && (
+              <div className="cn-niv mt-1 divide-y divide-(--border)">
+                {tenants.map((t) => {
+                  const lvl = levelOf(t);
+                  const on = !!lvl;
+                  return (
+                    <div key={t.id}>
+                      <div className="cn-row">
+                        <span className={clsx('cn-tile', on && 'is-on')} aria-hidden>
+                          <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">{m365Icon}</svg>
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-(--text) truncate">{t.config.tenantName ?? t.name}</p>
+                          <p className="text-xs text-(--muted) truncate">Microsoft 365</p>
+                        </div>
+                        <button type="button" role="switch" aria-checked={on} disabled={busy} className="ll-switch disabled:opacity-50"
+                          aria-label={`${t.config.tenantName ?? t.name} voor ${agent.name} ${on ? 'uitzetten' : 'aanzetten'}`}
+                          onClick={() => void save(t, on ? null : 'read')} />
+                      </div>
+                      <div className={clsx('ll-fold cn-fold', !on && 'is-shut')} inert={!on}>
+                        <div>
+                          <div className="cn-niv-in">
+                            <span className="text-xs text-(--muted) shrink-0">Niveau</span>
+                            <M365LevelSeg value={lvl ?? 'read'} onPick={(l) => void save(t, l)} label={`Niveau ${t.config.tenantName ?? t.name}`} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SharePanel({ agent, onChange }: { agent: AgentDef; onChange: (list: AgentDef[]) => void }) {
   const [open, setOpen] = useState(false);
   const [targets, setTargets] = useState<ShareTargets | null>(null);
@@ -488,6 +571,7 @@ export default function AgentsPage() {
               </div>
             </button>
             <TrainPanel agent={a} />
+            <ConnectorsPanel agent={a} />
             {isAdmin && <SharePanel agent={a} onChange={(l) => { setList(l); setAgentsCache(l); }} />}
           </div>
         ))}

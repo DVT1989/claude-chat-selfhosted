@@ -75,7 +75,11 @@ federationRouter.post('/consult/ask', keyAuth, writeOnly, express.json({ limit: 
     const b = z.object({ question: z.string().min(1).max(20000), topic: z.string().min(1).max(64), round: z.number().int().optional(), reason: z.string().max(200).nullable().optional(), from: z.string().max(100).optional() }).parse(req.body);
     const r = await chat.receiveAsk((req as FReq).fedKey!, (req as FReq).fedInstall, b);
     res.status(202).json(r);
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e instanceof AppError || e instanceof z.ZodError) return next(e);
+    console.error('[federation] consult/ask mislukt:', e);
+    next(new AppError(500, `Ontvanger kon het overleg niet starten: ${chat.scrubSecrets(String((e as Error)?.message ?? e)).slice(0, 300)}`));
+  }
 });
 federationRouter.get('/consult/:id', keyAuth, writeOnly, async (req, res, next) => {
   try { res.json(await chat.consultStatus(String(req.params.id))); } catch (e) { next(e); }

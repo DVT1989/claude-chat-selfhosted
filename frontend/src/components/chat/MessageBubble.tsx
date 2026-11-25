@@ -16,9 +16,10 @@ import { AgentBubble, useAgents, findAgent, deriveChain, type AgentStep, type Ag
 import { splitMentions } from './MentionMenu';
 import { tasksApi } from '@/lib/api';
 import { LimitEventLine, LimitLine, limitTime, type LimitEvent } from './LimitNotice';
-import ZoomImage from '@/components/Lightbox';
+import { LightboxThumb } from './ImageLightbox';
 import ChoiceList, { ChoiceMsgCtx, ChoiceLiveCtx } from './ChoiceList';
 import { DelegationCard, delegationEvents } from './DelegationCard';
+import { ReplyRow, ReplyIcon, QuoteInBubble, makeQuote, type ReplyQuote } from './ReplySupport';
 
 import 'highlight.js/styles/github-dark.css';
 
@@ -35,6 +36,8 @@ interface Props {
   flying?: boolean;
   /** UI #27: resumes of interrupted agents across messages (linkResumes) */
   agentLinks?: AgentLinks;
+  /** reply to this message (swipe, button); the composer shows the quote */
+  onReply?: (q: ReplyQuote) => void;
   /** no live run is moving: a waiting clock in the history may pulse */
   calm?: boolean;
   /** live steps per agent turn (toolUseId), from agent_activity: the busy bubble shows its step and timer */
@@ -47,7 +50,7 @@ type StoredEvent =
   | { type: 'tool_use'; toolName: string; toolInput: unknown; toolUseId?: string }
   | { type: 'tool_result'; toolUseId?: string; content: string; isError: boolean }
   | { type: 'rate_limited'; resetAt: string | null; message: string; at?: string }
-  | { type: 'limit_note'; kind: 'switched'; at?: string }
+  | { type: 'limit_note'; kind: 'switched' | 'owner_full'; owner?: string; at?: string }
   | { type: 'agent_start'; toolUseId: string; agentId: string; agentName: string; task?: string; resumed?: boolean; at?: string; ccAgentId?: string }
   | { type: 'agent_result'; toolUseId: string; content: string; isError: boolean }
   | { type: 'agent_interrupted'; toolUseId?: string; agentId: string; agentName: string; ccAgentId?: string; reason: 'limit' | 'restart'; at?: string; resumeAt?: string }
@@ -151,11 +154,17 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** Action row under an answer, like the Claude app: shown on hover (always on touch screens). */
-function MessageActions({ text }: { text: string }) {
+function MessageActions({ text, onReply }: { text: string; onReply?: () => void }) {
   const [copied, setCopied] = useState(false);
   if (!text.trim()) return null;
   return (
     <div className="flex gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
+      {onReply && (
+        <button type="button" title="Reageren" aria-label="Reageer op dit bericht" onClick={onReply}
+          className="hit-44 w-6 h-6 flex items-center justify-center rounded-md text-(--muted) hover:text-(--text) hover:bg-(--input) transition-[color,background-color,transform] duration-150 active:scale-95">
+          <ReplyIcon className="w-3.5 h-3.5" />
+        </button>
+      )}
       <button
         type="button"
         title={copied ? 'Gekopieerd' : 'Kopiëren'}
@@ -178,13 +187,17 @@ function MessageActions({ text }: { text: string }) {
 }
 
 const mdComponents = {
-  img: ({ src, alt }: { src?: string | Blob; alt?: string }) => (typeof src === 'string' && src ? <ZoomImage src={src} alt={alt} className="max-w-full rounded-lg" /> : null),
   pre: ({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) => {
     const code = children as React.ReactElement<{ className?: string; children?: unknown }> | undefined;
     if (/\blanguage-keuze\b/.test(code?.props?.className ?? '')) {
       return <ChoiceList src={String(code?.props?.children ?? '')} />;
     }
     return plainPre(children, props);
+  },
+  // screenshots from /render/claude (and other images): open in the lightbox on click
+  img: ({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>) => {
+    if (!src || typeof src !== 'string') return null;
+    return <LightboxThumb src={src} alt={alt ?? ''} />;
   },
 };
 
@@ -496,7 +509,7 @@ function UserText({ text }: { text: string }) {
   const agents = useAgents();
   const parts = splitMentions(text, agents.map((a) => a.name));
   if (parts.length === 1) return <>{text}</>;
-  // each @agent keeps its own colour, also inside the (green) user bubble
+  // each @agent keeps its own colour, also inside the own user bubble
   return <>{parts.map((p, i) => p.mention
     ? <span key={i} className="mention-glow mention-glow-still"
         style={{ '--ag': findAgent(agents, undefined, p.mention)?.color ?? undefined } as React.CSSProperties}>{p.text}</span>
@@ -552,23 +565,23 @@ function ClaudeAv() {
   return <span className="shared-av shared-av-claude" aria-hidden="true"><ClaudeLogo className="w-[62%] h-[62%]" /></span>;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, still, sent, flying, agentLinks, calm = true, agentLive, members, viewerId }: Props) {
+const MessageBubble = memo(function MessageBubble({ message, still, sent, flying, agentLinks, calm = true, agentLive, onReply, members, viewerId }: Props) {
   const tShared = useTranslations('chat');
   const agentNames = useAgents().map((a) => a.name);
   const isUser = message.role === 'user';
   // shared project: a question of another member sits on the left in the "other" tint, with avatar and name
   const sender = isUser && members && members.length > 1 && message.user_id && message.user_id !== viewerId
     ? (members.find((m) => m.id === message.user_id) ?? { id: message.user_id, name: '?', avatar: null, is_owner: false }) : null;
+  // group chat (shared project): everybody gets an avatar of 30 px; own bubble on the right, Claude with the real logo
+  const shared = !!members && members.length > 1;
+  const me = shared && isUser && !sender ? (members!.find((m) => m.id === viewerId) ?? null) : null;
+  const senderColor = sender ? (sender as { color?: string | null }).color ?? undefined : undefined;
   const askedBy = !isUser ? (message.metadata?.asked_by as { id: string; name: string } | undefined) : undefined;
   const otherAccount = members && members.length > 1 && askedBy && askedBy.id !== viewerId ? askedBy.name : null;
   // live messages carry attachments; from the database they come via metadata
   const atts = (message.attachments ?? (message.metadata?.attachments as Message['attachments']) ?? []);
   const parsedAll = !isUser ? parseStructured(message.content) : null;
   // a delegation (agent in its own workplace) is no part of the bubble: its card comes under it
-  // group chat (shared project): everybody gets an avatar of 30 px; own bubble on the right, Claude with the real logo
-  const shared = !!members && members.length > 1;
-  const me = shared && isUser && !sender ? (members!.find((m) => m.id === viewerId) ?? null) : null;
-  const senderColor = sender ? (sender as { color?: string | null }).color ?? undefined : undefined;
   const delegations = delegationEvents(parsedAll);
   const parsed = delegations.length ? parsedAll!.filter((e) => e.type !== 'delegation') : parsedAll;
   const delegationCards = delegations.length
@@ -614,6 +627,10 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
   if (!isUser && !message.content.trim() && !atts.length && !message.metadata?.streaming && !message.metadata?.error
     && !(Array.isArray(message.metadata?.tools) && (message.metadata!.tools as unknown[]).length)) return null;
 
+  const canReply = !!onReply && !message.id.startsWith('temp-') && !message.metadata?.streaming && !message.metadata?.auto && message.role !== 'system';
+  const reply = canReply ? () => { const q = makeQuote(message); if (q) onReply!(q); } : undefined;
+  const rt = isUser ? (message.metadata?.reply_to as ReplyQuote | undefined) : undefined;
+  const replyTo = rt && typeof rt.id === 'string' && typeof rt.text === 'string' ? rt : undefined;
   // a scheduled task ended with a proposal: one tap approves it (gone once used)
   const taskAction = !isUser ? (message.metadata?.task_action as { task_id?: string; used?: boolean } | undefined) : undefined;
   const actionEl = taskAction?.task_id && !taskAction.used ? <TaskAction taskId={taskAction.task_id} /> : null;
@@ -627,7 +644,7 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
     const lastWait = agentSegs.map((s) => !!s.wait && s.content === undefined && !agentLinks?.get(s.toolUseId)?.resumedAt).lastIndexOf(true);
     const chain = deriveChain(agentSegs.map((s) => ({ agentId: s.agentId, agentName: s.agentName, content: s.content, isError: s.isError, adjacentPrev: s.adjacentPrev })), agentNames);
     return (
-      <div data-key={message.clientKey ?? message.id} className={clsx('group/msg', still && 'msg-still')}>
+      <div data-key={message.clientKey ?? message.id} data-mid={message.id} className={clsx('group/msg', still && 'msg-still')}>
         {segments.map((sg, i) => {
           if (sg.kind === 'agent') {
             const k = agentSegs.indexOf(sg);
@@ -649,7 +666,7 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
             );
           }
           return (
-            <div key={i} className={clsx('msg-in flex justify-start px-4 md:px-6 py-1.5', shared && 'shared-in')}>
+            <ReplyRow key={i} onReply={i === lastMain ? reply : undefined} className={clsx('msg-in flex justify-start px-4 md:px-6 py-1.5', shared && 'shared-in')}>
               {shared && <ClaudeAv />}
               {/* only the bubble that carries the time reserves room for it; the others (thinking, activity) end flush */}
               <div className={clsx('wa-bubble wa-in min-w-0 max-w-[92%] md:max-w-[80%]', i === lastMain && 'wa-foot')}>
@@ -658,13 +675,13 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
                   <StructuredMessage events={sg.events} />
                   {i === lastMain && (
                     <div className="wa-foot-row">
-                      <MessageActions text={copyText} />
+                      <MessageActions text={copyText} onReply={reply} />
                       <BubbleTime iso={message.created_at} />
                     </div>
                   )}
                 </div>
               </div>
-            </div>
+            </ReplyRow>
           );
         })}
         {limitLines}
@@ -680,13 +697,14 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
   }
 
   return (<>
-    <div data-key={message.clientKey ?? message.id} style={senderColor ? ({ '--pc': senderColor } as React.CSSProperties) : undefined} className={clsx('msg-in group/msg flex px-4 md:px-6 py-1.5', isUser && !sender ? 'justify-end' : 'justify-start', shared && 'shared-in', still && 'msg-still', sent && 'msg-sent', flying && 'msg-flying')}>
+    <ReplyRow data-key={message.clientKey ?? message.id} data-mid={message.id} onReply={reply} own={isUser && !sender} style={senderColor ? ({ '--pc': senderColor } as React.CSSProperties) : undefined} className={clsx('msg-in group/msg flex px-4 md:px-6 py-1.5', isUser && !sender ? 'justify-end' : 'justify-start', shared && 'shared-in', still && 'msg-still', sent && 'msg-sent', flying && 'msg-flying')}>
       {sender && <span className="shared-av"><UserAvatar size="sm" user={{ avatar: sender.avatar, name: sender.name, email: sender.id }} /></span>}
       {shared && !isUser && <ClaudeAv />}
       <div className={clsx('wa-bubble wa-foot', isUser && !sender ? clsx('wa-out max-w-[85%] md:max-w-[65%]', shared && 'wa-own') : sender ? 'wa-in wa-other max-w-[85%] md:max-w-[65%]' : 'wa-in min-w-0 max-w-[92%] md:max-w-[80%]')}>
         {isUser ? (
           <div className="wa-body">
             {sender && <p className="shared-name">{sender.name}</p>}
+            {replyTo && <QuoteInBubble quote={replyTo} own />}
             {message.metadata?.auto === 'delegation' && (
               <p className="flex items-center gap-1 text-[11px] font-medium text-(--muted) mb-0.5">
                 <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h14m-5-5 5 5-5 5" /><path d="M4 5v14" /></svg>
@@ -706,12 +724,14 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
               <div className="flex flex-wrap gap-2 mt-2">
                 {atts.map(att =>
                   att.mime_type.startsWith('image/') ? (
-                    <ZoomImage
-                      key={att.id}
-                      src={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`}
-                      alt={att.original_name}
-                      className="max-h-44 max-w-[240px] rounded-xl object-cover border border-white/10 hover:brightness-110 transition"
-                    />
+                    <a key={att.id} href={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`} target="_blank" rel="noreferrer">
+                      <img
+                        src={`/api/conversations/${message.conversation_id}/attachments/${att.id}/content`}
+                        alt={att.original_name}
+                        loading="lazy"
+                        className="max-h-44 max-w-[240px] rounded-xl object-cover border border-white/10 hover:brightness-110 transition"
+                      />
+                    </a>
                   ) : (
                     <div key={att.id} className="flex items-center gap-1.5 bg-(--border) rounded-lg px-2 py-1.5 text-xs text-(--muted)">
                       <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -728,6 +748,7 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
           </div>
         ) : (
           <div className="wa-body">
+            {shared && <p className="shared-name shared-name-claude">Claude</p>}
             <ChoiceMsgCtx.Provider value={message.id}>
               {structured ? <StructuredMessage events={structured} /> : <MarkdownBlock text={message.content} />}
             </ChoiceMsgCtx.Provider>
@@ -736,6 +757,7 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
                 text={structured
                   ? structured.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('\n\n')
                   : message.content}
+                onReply={reply}
               />
               <BubbleTime iso={message.created_at} />
             </div>
@@ -744,7 +766,7 @@ const MessageBubble = memo(function MessageBubble({ message, still, sent, flying
         )}
       </div>
       {me && <span className="shared-av"><UserAvatar size="sm" user={{ avatar: me.avatar, name: me.name, email: me.id }} /></span>}
-    </div>
+    </ReplyRow>
     {limitLines}
     {delegationCards}
     {actionEl}

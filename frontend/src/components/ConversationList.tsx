@@ -134,8 +134,10 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
 
   const totalUnread = Object.values(unread.projects).reduce((a, b) => a + b, 0);
   const needle = search.trim().toLowerCase();
-  const matches = (c: (typeof conversations)[number]) => !c.project_id && (!needle || c.title.toLowerCase().includes(needle) || (c.last_message?.preview ?? '').toLowerCase().includes(needle));
-  const visible = conversations.filter(matches);
+  const matches = (c: (typeof conversations)[number]) => !needle || c.title.toLowerCase().includes(needle) || (c.last_message?.preview ?? '').toLowerCase().includes(needle);
+  // project chats live in their project; the general list only shows them in search results (with the project chip)
+  const general = conversations.filter((c) => !c.project_id || !!needle);
+  const visible = general.filter(matches);
   const projectMatches = (p: Project) => !needle || p.name.toLowerCase().includes(needle);
   const projectVisible = projects.filter(projectMatches);
   const projectChats = conversations.filter((c) => c.project_id === shownProject?.id);
@@ -261,7 +263,7 @@ export default function ConversationList({ variant }: { variant: 'pane' | 'page'
                     </p>
                   </div>
                 </div>
-                {conversations.map((conv, i) => chatRow(conv, i, !matches(conv)))}
+                {general.map((conv, i) => chatRow(conv, i, !matches(conv)))}
                 {variant === 'page' && visible.length > 0 && (
                   <p className="text-[11.5px] text-(--muted) text-center py-4 px-6">{t('holdToDelete')}</p>
                 )}

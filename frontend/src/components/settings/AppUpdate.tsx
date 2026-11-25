@@ -38,6 +38,8 @@ export default function AppUpdate() {
       poll.current = setInterval(async () => {
         try {
           const n = await admin.updateStatus();
+          if (n.lastError && !n.updating) { setS(n); setWaiting(false); setMsg(''); setErr(n.lastError); if (poll.current) clearInterval(poll.current); return; }
+          setS(n);
           if (n.current?.sha === target && !n.updating) { setS(n); setWaiting(false); setMsg(`Bijgewerkt naar ${target}. Herlaad de pagina voor de nieuwe versie.`); if (poll.current) clearInterval(poll.current); }
         } catch { /* backend restarting */ }
       }, 10_000);
@@ -59,7 +61,7 @@ export default function AppUpdate() {
             {s.current && <span className="text-xs text-(--muted) font-mono">{s.current.sha} · {day(s.current.date)}</span>}
           </div>
         )}
-        {s?.repo && <p className="text-xs text-(--muted)">{s.repo} ({s.branch}){s.ahead ? ` · ${s.ahead} eigen commit(s) niet op GitHub` : ''}{s.dirty ? ` · ${s.dirty} lokaal gewijzigd` : ''}</p>}
+        {s?.repo && <p className="text-xs text-(--muted)">{s.repo} ({s.branch}){s.ahead ? ` · ${s.ahead} eigen commit(s) niet op GitHub` : ''}{s.dirty ? ` · ${s.dirty} lokaal gewijzigd (blijven behouden)` : ''}</p>}
         {s?.reason && <p className="tr-line text-xs text-amber-500">{s.reason}</p>}
         {!!s?.incoming.length && (
           <ul className="tr-line text-xs space-y-1 max-h-40 overflow-y-auto">
@@ -68,7 +70,7 @@ export default function AppUpdate() {
             ))}
           </ul>
         )}
-        {msg && <p className="tr-line text-xs text-emerald-500">{msg}{waiting ? ' Bezig met bouwen en herstarten…' : ''}</p>}
+        {msg && <p className="tr-line text-xs text-emerald-500">{msg}{waiting ? ` ${s?.phase ?? 'Bezig met bouwen en herstarten'}…` : ''}</p>}
         {err && <p className="tr-line text-xs text-red-400">{err}</p>}
         <div className="flex flex-wrap gap-2 pt-1">
           <button type="button" onClick={() => void check()} disabled={checking || busy || waiting}
@@ -76,7 +78,7 @@ export default function AppUpdate() {
             {checking ? 'Controleren…' : 'Opnieuw controleren'}
           </button>
           {s?.available && s.behind > 0 && (
-            <button type="button" onClick={() => void update()} disabled={busy || waiting || s.updating || !!s.ahead || !!s.dirty}
+            <button type="button" onClick={() => void update()} disabled={busy || waiting || s.updating || !!s.ahead}
               className="tr-line px-3 py-1.5 rounded-lg bg-(--accent-strong) text-white text-sm font-medium disabled:opacity-50">
               {busy ? 'Starten…' : waiting || s.updating ? 'Bijwerken…' : 'Bijwerken'}
             </button>

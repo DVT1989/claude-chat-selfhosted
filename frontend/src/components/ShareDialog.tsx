@@ -267,7 +267,15 @@ export default function ShareDialog({ project, onClose, onChanged, onLeft }: {
                 </div>
                 {a.in_project && (
                   <div className="sp-agent-body">
-                    <span className="pd-label">{t('agentUsers')}</span>
+                    <div className="sp-seg" role="group">
+                      <button className={clsx(a.account_mode === 'user' && 'on')} onClick={() => void saveAgent(a, { account_mode: 'user' })}>{t('accountUser')}</button>
+                      <button className={clsx(a.account_mode === 'owner' && 'on')} onClick={() => void saveAgent(a, { account_mode: 'owner' })}>{t('accountOwner', { name: a.owner_name })}</button>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-(--muted) mt-2">
+                      <button role="switch" aria-checked={a.fallback} aria-label={t('fallbackLong')} onClick={() => void saveAgent(a, { fallback: !a.fallback })} className={clsx('sp-sw sp-sw-sm', a.fallback && 'sp-sw-on')}><i /></button>
+                      <span>{t('fallbackLong')}</span>
+                    </div>
+                    <span className="pd-label mt-2">{t('agentUsers')}</span>
                     <div className="flex flex-wrap gap-1.5">
                       {members.map((m) => {
                         const on = a.user_ids.includes(m.id);

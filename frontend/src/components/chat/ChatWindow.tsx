@@ -5,6 +5,7 @@ import ChromePanelButton from './ChromePanelButton';
 import { Fragment, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent } from 'react';
 import { useChatStore, useAuthStore } from '@/lib/store';
 import { conversations as convApi, type QueuedMessage } from '@/lib/api';
+import { ComposerQuote, type ReplyQuote } from './ReplySupport';
 import { ChoiceCtx } from './ChoiceList';
 import MessageBubble, { SmoothHeight, StreamingBubble, ToolCallBlock, linkResumes } from './MessageBubble';
 import { AgentBubble, type AgentStep, type AgentWait, useAgents, findAgent, deriveChain } from './AgentBubble';
@@ -301,6 +302,9 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   const userDefaultModel = useAuthStore(s => s.user?.default_model ?? null);
   const prefs = useAuthStore(s => s.user?.preferences ?? null);
   const spellOn = prefs?.spellcheck !== false;
+  const suggestOn = prefs?.prompt_suggestions === true;
+  // predicted next prompt (Claude Code --prompt-suggestions): ghost text on desktop, tap chip on mobile
+  const [suggestion, setSuggestion] = useState('');
   const spellLang = prefs?.spell_lang && prefs.spell_lang !== 'auto' ? prefs.spell_lang : undefined;
   const effectiveDefault = userDefaultModel || systemDefaultModel;
   const [convModel, setConvModel] = useState<string>('');
@@ -506,6 +510,13 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
   // "Verder" on an interrupted agent bubble: send the follow-up as a normal message
   const choiceCtx = useMemo(() => ({ messages }), [messages]);
   const sendRef = useRef<(t: string) => void>(() => {});
+  // reply to an earlier message: quote above the composer, id goes along with the next send
+  const [replyQuote, setReplyQuote] = useState<ReplyQuote | null>(null);
+  useEffect(() => { setReplyQuote(null); }, [conversationId]);
+  const startReply = useCallback((q: ReplyQuote) => {
+    setReplyQuote(q);
+    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+  }, []);
   sendRef.current = (t: string) => { void sendMessage(t); };
   useEffect(() => {
     const onContinue = (e: Event) => {
@@ -967,6 +978,10 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     es.addEventListener('replay_start', onReplayStart as EventListener);
     es.addEventListener('replay_end', onReplayEnd as EventListener);
     es.addEventListener('queue', onQueue as EventListener);
+    const onSuggest = (e: MessageEvent) => {
+      try { const s = (JSON.parse(e.data) as { suggestion?: string }).suggestion; if (typeof s === 'string' && s.trim()) setSuggestion(s.trim()); } catch { /* skip */ }
+    };
+    es.addEventListener('prompt_suggestion', onSuggest as EventListener);
     es.addEventListener('delegation', onDelegation as EventListener);
 
     // Browser auto-reconnects on transport-level errors — no manual action.
@@ -976,6 +991,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
       es.removeEventListener('text', onText as EventListener);
       es.removeEventListener('thinking', onThinking as EventListener);
       es.removeEventListener('tool_use', onToolUse as EventListener);
+      es.removeEventListener('prompt_suggestion', onSuggest as EventListener);
       es.removeEventListener('tool_result', onToolResult as EventListener);
       es.removeEventListener('agent_start', onAgentStart as EventListener);
       es.removeEventListener('agent_activity', onAgentActivity as EventListener);
@@ -1082,6 +1098,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     // Claude is busy: queue it on the server, it runs after the current answer (also with the app closed)
     if (isStreaming) {
       if (!retryText) setInput('');
+      setReplyQuote(null);
       const queuedAtts = [...convAttachments];
       setConvAttachments([]);
       try {
@@ -1109,6 +1126,8 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
 
     // Attachments go with this message and leave the composer
     const sentAtts = [...convAttachments];
+    const sentReply = !retryText ? replyQuote : null;
+    if (sentReply) setReplyQuote(null);
     if (sentAtts.length > 0) sentAttachmentsRef.current.set(text, sentAtts);
     setConvAttachments([]);
 
@@ -1120,6 +1139,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
       token_count: 0,
       created_at: new Date().toISOString(),
       attachments: sentAtts.length > 0 ? sentAtts : undefined,
+      metadata: sentReply ? { reply_to: sentReply } : undefined,
     };
     addMessage(conversationId, tempUserMsg);
     setSentId(tempUserMsg.id);
@@ -1141,7 +1161,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
         credentials: 'include',
         signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, attachments: sentAtts.map(a => a.id) }),
+        body: JSON.stringify({ message: text, attachments: sentAtts.map(a => a.id), ...(sentReply ? { reply_to: sentReply.id } : {}) }),
       });
 
       if (!res.ok) {
@@ -1300,13 +1320,29 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
     } catch { /* ignore */ }
   }
 
+  // the suggestion goes away at a new turn, in another conversation, or when the setting is off
+  useEffect(() => { if (isStreaming || !suggestOn) setSuggestion(''); }, [isStreaming, suggestOn]);
+  useEffect(() => { setSuggestion(''); }, [conversationId]);
+  const ghostRest = suggestOn && !isStreaming && suggestion && suggestion.length > input.length && suggestion.startsWith(input) ? suggestion.slice(input.length) : '';
+  function acceptSuggestion() {
+    if (!suggestion) return;
+    setInput(suggestion); setSuggestion('');
+    requestAnimationFrame(() => { const t = textareaRef.current; if (t) { t.focus(); t.setSelectionRange(suggestion.length, suggestion.length); setCaret(suggestion.length); } });
+  }
+
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (ghostRest && !mentionOpen) {
+      const atEnd = e.currentTarget.selectionStart === input.length && e.currentTarget.selectionEnd === input.length;
+      if (e.key === 'Tab' && !e.shiftKey && atEnd) { e.preventDefault(); acceptSuggestion(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSuggestion(''); return; }
+    }
     if (mentionOpen) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionList.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionList.length) % mentionList.length); return; }
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); pickMention(mentionList[Math.min(mentionIdx, mentionList.length - 1)]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setMentionClosed(mentionTok!.start); return; }
     }
+    if (e.key === 'Escape' && replyQuote && !input) { e.preventDefault(); setReplyQuote(null); return; }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (input.length <= MAX_INPUT_CHARS) sendMessage();
@@ -1415,7 +1451,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
           .filter(msg => msg !== livePartial(messages))
           .map((msg) => (
             <MessageBubble key={msg.clientKey ?? msg.id} message={msg} still={msg.id === swapId} sent={msg.id === sentId || (!!msg.clientKey && msg.clientKey === sentId)} flying={!!flyId && (msg.id === flyId || msg.clientKey === flyId)}
-              agentLinks={agentLinks.links} calm={!isStreaming} members={members} viewerId={viewerId} />
+              agentLinks={agentLinks.links} calm={!isStreaming} onReply={startReply} members={members} viewerId={viewerId} />
           ))}
         </ChoiceCtx.Provider>
 
@@ -1604,6 +1640,13 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
         )}>
           <MentionMenu open={mentionOpen} list={mentionList} q={mentionTok?.q ?? ''} active={Math.min(mentionIdx, Math.max(0, mentionList.length - 1))}
             onPick={pickMention} onHover={setMentionIdx} />
+          <ComposerQuote quote={replyQuote} onClear={() => { setReplyQuote(null); textareaRef.current?.focus({ preventScroll: true }); }} />
+          {suggestOn && !isStreaming && suggestion && !input && (
+            <button type="button" key={suggestion} onClick={acceptSuggestion} title="Suggestie overnemen"
+              className="ghost-in md:hidden mb-2 max-w-full truncate rounded-full border border-(--border) px-3 py-1 text-left text-sm text-(--muted) hover:text-(--text)">
+              {suggestion}
+            </button>
+          )}
           <div className="relative">
           {hasMention && (
             <div ref={mirrorRef} aria-hidden
@@ -1615,11 +1658,18 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
               {'\u200b'}
             </div>
           )}
+          {ghostRest && (
+            <div aria-hidden key={suggestion}
+              className={clsx('ghost-in hidden md:block absolute left-0 top-0 w-full h-full box-border px-1 text-[15px] leading-relaxed overflow-hidden pointer-events-none', input ? 'whitespace-pre-wrap break-words pr-12' : 'truncate pr-12')}>
+              <span className="invisible">{input}</span><span className="text-(--muted) opacity-70">{ghostRest}</span>
+              <span className="absolute right-1 top-[5px] rounded border border-(--border) px-1 text-[10px] leading-4 text-(--muted)">Tab</span>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             aria-label={tr('messageLabel')}
             value={input}
-            onChange={(e) => { setInput(e.target.value); if (members.length > 1 && e.target.value && Date.now() - lastTypingSent.current > 3000) { lastTypingSent.current = Date.now(); void projectsApi.typing(conversationId).catch(() => {}); } setCaret(e.target.selectionStart ?? e.target.value.length); }}
+            onChange={(e) => { if (suggestion && !suggestion.startsWith(e.target.value)) setSuggestion(''); setInput(e.target.value); if (members.length > 1 && e.target.value && Date.now() - lastTypingSent.current > 3000) { lastTypingSent.current = Date.now(); void projectsApi.typing(conversationId).catch(() => {}); } setCaret(e.target.selectionStart ?? e.target.value.length); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onBlur={() => setMentionClosed(mentionTok?.start ?? null)}
             onFocus={() => setMentionClosed(null)}
@@ -1631,7 +1681,7 @@ export default function ChatWindow({ conversationId, initialMessages, titleOverr
             spellCheck={spellOn}
             lang={spellOn ? spellLang : undefined}
             autoCorrect={spellOn ? 'on' : 'off'}
-            className="relative block w-full px-1 bg-transparent text-(--text) text-[15px] placeholder-(--muted) resize-none outline-none leading-relaxed min-h-[28px] max-h-[200px]"
+            className={clsx('relative block w-full px-1 bg-transparent text-(--text) text-[15px] placeholder-(--muted)', ghostRest && 'md:placeholder-transparent', 'resize-none outline-none leading-relaxed min-h-[28px] max-h-[200px]')}
           />
           </div>
           {/* Bottom row, like the Claude app: attach left; model + send right */}

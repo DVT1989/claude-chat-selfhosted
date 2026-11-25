@@ -5,11 +5,12 @@ import { z } from 'zod';
 import { query } from '../db';
 import { sessions } from '../redis';
 import { requireAuth, requireAdmin, auditLog } from '../middleware/auth';
+import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { getAuthStatus } from '../services/claudeCode';
 
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { updateStatus, runUpdate } from '../services/appUpdate';
 import { createBackup, listBackups, restoreBackup, deleteBackup, restartBackend, BACKUP_ROOT } from '../services/backup';
@@ -269,10 +270,16 @@ adminRouter.get('/update', async (_req: Request, res: Response, next: NextFuncti
 });
 adminRouter.post('/update', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const r = await runUpdate();
+    const r = await runUpdate(req.user!.userId);
     await auditLog(req.user!.userId, 'app.update', 'system', null, req.ip ?? '', { services: r.services });
     res.json(r);
   } catch (err) { next(err); }
+});
+
+// Changelog of what was built or changed (CHANGELOG.md in the project folder), shown in Settings > Beheer > Wijzigingen
+adminRouter.get('/changelog', (_req: Request, res: Response) => {
+  const file = [join(config.projectDir, 'CHANGELOG.md'), '/opt/claude-chat/CHANGELOG.md'].find((f) => existsSync(f));
+  res.json({ text: file ? readFileSync(file, 'utf8') : '' });
 });
 
 // Backups run in this process (the former admin-claude container was merged into the backend).

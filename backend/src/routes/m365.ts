@@ -37,7 +37,24 @@ m365Router.put('/tenants/:id/access', async (req: Request, res: Response, next: 
                             WHERE id = $1 AND user_id = $2 AND type = 'm365' RETURNING id`,
       [String(req.params.id), req.user!.userId, JSON.stringify(access)]);
     if (!r.rowCount) throw new AppError(404, 'Tenant niet gevonden');
+    // keep the agent switches (Settings > Agents > Koppelingen) in step: an agent has access exactly when its switch is on
+    const keys = Object.keys(access);
+    await query('DELETE FROM agent_connectors WHERE connector_id = $1 AND NOT (agent_id::text = ANY($2::text[]))', [String(req.params.id), keys]);
+    if (keys.length) await query('INSERT INTO agent_connectors (agent_id, connector_id) SELECT UNNEST($2::uuid[]), $1 ON CONFLICT DO NOTHING', [String(req.params.id), keys]);
     res.json({ access });
+  } catch (err) { next(err); }
+});
+
+// Level of one agent that already has access (the switch under Settings > Agents > Koppelingen)
+m365Router.put('/tenants/:id/access/:agentId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const level = (req.body ?? {}).level;
+    if (level !== 'read' && level !== 'write') throw new AppError(400, 'Ongeldig niveau');
+    const r = await query(`UPDATE connectors SET config = jsonb_set(config, ARRAY['agent_access', $3::text], to_jsonb($4::text)), updated_at = now()
+                            WHERE id = $1 AND user_id = $2 AND type = 'm365' AND config->'agent_access' ? $3::text RETURNING id`,
+      [String(req.params.id), req.user!.userId, String(req.params.agentId), level]);
+    if (!r.rowCount) throw new AppError(404, 'Agent heeft geen toegang');
+    res.json({ level });
   } catch (err) { next(err); }
 });
 

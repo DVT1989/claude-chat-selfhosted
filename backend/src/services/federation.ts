@@ -65,6 +65,7 @@ export async function ensureFederationSchema(): Promise<void> {
       last_result JSONB,
       created_by UUID REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await query('ALTER TABLE federation_peers ADD COLUMN IF NOT EXISTS sync_updated_at TIMESTAMPTZ');
   await query(`CREATE TABLE IF NOT EXISTS federation_origin (
       install_id TEXT NOT NULL,
       kind TEXT NOT NULL,
@@ -795,7 +796,7 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
   running.add(p.id);
   const result: Record<string, Stat> = {};
   try {
-    await query(`UPDATE federation_peers SET status = 'syncing', status_message = NULL WHERE id = $1`, [p.id]);
+    await query(`UPDATE federation_peers SET status = 'syncing', status_message = NULL, sync_updated_at = now() WHERE id = $1`, [p.id]);
     await testPeer(p.id);
     p = await getPeer(p.id);
     const me = await selfInfo();
@@ -806,6 +807,8 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
     // without all_users only the items of the admin who made the link go along (lessons are shared knowledge, always all)
     const creatorEmail = p.all_users || !p.created_by ? undefined
       : (await query<{ email: string }>('SELECT email FROM users WHERE id = $1', [p.created_by])).rows[0]?.email;
+    // Save cursors after every page, so a sync cut off by a restart continues where it stopped.
+    const saveCursors = () => query('UPDATE federation_peers SET cursors = $2, push_cursors = $3, sync_updated_at = now() WHERE id = $1', [p.id, JSON.stringify(cursors), JSON.stringify(pushCursors)]).then(() => undefined);
     for (const kind of KINDS.filter((k) => wanted.includes(k))) {
       const st = (result[kind] = newStat());
       const scope = opts.owner ?? (kind === 'lessons' ? undefined : creatorEmail);
@@ -822,12 +825,12 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
         if (stop) break;
         if (!data.next || !data.items.length && data.next === `${after?.[0]}|${after?.[1]}`) { if (data.next && !opts.owner) cursors[kind] = data.next; break; }
         after = parseCursor(data.next);
-        if (!opts.owner) cursors[kind] = data.next;
+        if (!opts.owner) { cursors[kind] = data.next; await saveCursors(); }
         if (data.items.length === 0 && !after) break;
       }
       // two-way key: send what is new or changed here
       if ((opts.push ?? true) && p.direction === 'readwrite' && !failed) {
-        try { await pushKind(p, me, kind, st, pushCursors, scope, !!opts.owner); } catch (e) { failed = `${KIND_LABEL[kind as KindName]} versturen: ${(e as Error).message}`; }
+        try { await pushKind(p, me, kind, st, pushCursors, scope, !!opts.owner, saveCursors); } catch (e) { failed = `${KIND_LABEL[kind as KindName]} versturen: ${(e as Error).message}`; }
       }
       if (failed) break;
     }
@@ -842,7 +845,7 @@ export async function syncPeer(idOrName: string, opts: SyncOpts = {}): Promise<R
   } finally { running.delete(p.id); }
 }
 
-async function pushKind(p: Peer, me: { id: string; name: string }, kind: string, st: Stat, cursors: Record<string, string>, owner?: string, oneOff = false): Promise<void> {
+async function pushKind(p: Peer, me: { id: string; name: string }, kind: string, st: Stat, cursors: Record<string, string>, owner?: string, oneOff = false, save?: () => Promise<void>): Promise<void> {
   const k = kindOf(kind);
   let after = oneOff ? null : parseCursor(cursors[kind]);
   for (let page = 0; page < 500; page++) {
@@ -880,7 +883,7 @@ async function pushKind(p: Peer, me: { id: string; name: string }, kind: string,
       if (r.local_id && r.result !== 'conflict') await setOrigin(p.remote_install_id as string, kind, r.local_id, item.id, item.hash, true);
     }
     after = parseCursor(mkCursor(raw[raw.length - 1]));
-    if (!oneOff) cursors[kind] = mkCursor(raw[raw.length - 1]);
+    if (!oneOff) { cursors[kind] = mkCursor(raw[raw.length - 1]); await save?.(); }
     if (raw.length < pageN) break;
   }
 }
@@ -924,6 +927,18 @@ export function startFederationScheduler(): void {
       }
     })().catch((e) => console.error('[federation] scheduler:', e));
   }, 5 * 60_000);
+  // A sync cut off by a restart stays on 'syncing' (the in-memory lock is gone): resume it when not updated for over 20 s.
+  const resumeStale = () => void (async () => {
+    const stuck = (await query<{ id: string }>(
+      `SELECT id FROM federation_peers WHERE enabled AND status = 'syncing' AND COALESCE(sync_updated_at, '-infinity') < now() - interval '20 seconds'`)).rows;
+    for (const d of stuck) {
+      if (running.has(d.id)) continue;
+      console.log('[federation] resuming interrupted sync', d.id);
+      await syncPeer(d.id).catch((e) => console.error('[federation] resume failed:', (e as Error).message));
+    }
+  })().catch((e) => console.error('[federation] resume:', e));
+  setTimeout(resumeStale, 25_000).unref();
+  setInterval(resumeStale, 30_000).unref();
   console.log('✓ Federation scheduler started (nightly 03:30)');
 }
 

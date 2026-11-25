@@ -53,7 +53,7 @@ export function sourceUrl(r: GithubRef, skillPath: string): string {
   return `https://github.com/${r.owner}/${r.repo}/tree/${r.ref ?? 'HEAD'}${p}`;
 }
 
-function dirSize(dir: string): number {
+export function dirSize(dir: string): number {
   let total = 0;
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
@@ -132,6 +132,57 @@ export async function importFromGithub(home: string, input: string): Promise<Imp
       installSkillDir(home, name, dir);
       used.add(name);
       result.imported.push({ name, source });
+    }
+    return result;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+const MAX_ZIP_BYTES = 30 * 1024 * 1024;
+const MAX_ZIP_UNPACKED = 100 * 1024 * 1024;
+
+/**
+ * Import skills from an uploaded .skill or .zip (as exported by Claude Desktop): unpack, find every folder with
+ * a SKILL.md and install it with its assets (scripts, references, assets). Symlinks are removed, paths outside the
+ * target are skipped by unzip, and the unpacked size is limited.
+ */
+export function importFromZip(home: string, data: Buffer, filename: string): ImportResult {
+  if (data.length < 22 || data.readUInt32LE(0) !== 0x04034b50) throw new Error('Dit is geen geldig .skill- of .zip-bestand.');
+  if (data.length > MAX_ZIP_BYTES) throw new Error('Het bestand is te groot (max 30 MB).');
+  const work = mkdtempSync(join(tmpdir(), 'skill-zip-'));
+  try {
+    const zip = join(work, 'in.zip');
+    writeFileSync(zip, data);
+    const info = execFileSync('unzip', ['-Z', '-t', zip], { stdio: 'pipe', timeout: 30000 }).toString();
+    const total = Number(info.match(/([\d]+) bytes uncompressed/)?.[1] ?? 0);
+    if (!total || total > MAX_ZIP_UNPACKED) throw new Error('Het bestand is leeg of te groot na uitpakken (max 100 MB).');
+    const ex = join(work, 'x');
+    mkdirSync(ex);
+    try { execFileSync('unzip', ['-q', '-o', zip, '-d', ex], { stdio: 'pipe', timeout: 60000 }); }
+    catch (e) {
+      // exit code 1 = warnings only (for example skipped unsafe paths): continue; anything else = broken archive
+      if ((e as { status?: number }).status !== 1) throw new Error('Uitpakken mislukt: het bestand is beschadigd.');
+    }
+    execFileSync('find', [ex, '-type', 'l', '-delete']);
+    execFileSync('find', [ex, '-name', '__MACOSX', '-prune', '-exec', 'rm', '-rf', '{}', ';']);
+    const dirs = findSkillDirs(ex);
+    if (dirs.length === 0) throw new Error('Geen skill gevonden: er zit geen SKILL.md in dit bestand.');
+    if (dirs.length > MAX_SKILLS) throw new Error(`Te veel skills in één bestand (${dirs.length}).`);
+    const fallback = basename(filename).replace(/\.(skill|zip)$/i, '');
+    const result: ImportResult = { imported: [], skipped: [] };
+    const used = new Set<string>();
+    for (const dir of dirs) {
+      const rel = relative(ex, dir).split('\\').join('/');
+      const fm = parseFrontmatter(readFileSync(join(dir, 'SKILL.md'), 'utf8'));
+      const name = slugify(fm.name || (dir === ex ? fallback : basename(dir)));
+      if (!isValidSkillName(name)) { result.skipped.push({ path: rel || '/', reason: 'geen geldige naam' }); continue; }
+      if (used.has(name)) { result.skipped.push({ path: rel, reason: `naam "${name}" komt dubbel voor` }); continue; }
+      if (!fm.description) { result.skipped.push({ path: rel || '/', reason: 'SKILL.md heeft geen description' }); continue; }
+      if (dirSize(dir) > MAX_SKILL_DIR_BYTES) { result.skipped.push({ path: rel, reason: 'map is groter dan 15 MB' }); continue; }
+      installSkillDir(home, name, dir);
+      used.add(name);
+      result.imported.push({ name, source: '' });
     }
     return result;
   } finally {

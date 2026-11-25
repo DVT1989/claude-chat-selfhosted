@@ -40,11 +40,15 @@ before(async () => {
         refreshCalls++;
         // the token must be limited to our own scope list, never .default (that also yields every other consented right)
         assert.ok(!(f.get('scope') ?? '').includes('.default'), 'refresh must not ask .default');
-        assert.match(f.get('scope') ?? '', /Mail\.Read\.Shared/);
+        assert.match(f.get('scope') ?? '', /Mail\.Read\.Shared/); // in every set, also the full one
         if (f.get('refresh_token') === 'RT1') return json({ access_token: 'GRAPH-AT', refresh_token: 'RT2' });
         // a tenant linked before the write rights: the new set needs consent, the old set still works
+        if (f.get('refresh_token') === 'RO') {
+          if (/ReadWrite|Send/.test(f.get('scope') ?? '')) return json({ error: 'unexpected write scope' }, 400);
+          return json({ access_token: 'READ-AT' });
+        }
         if (f.get('refresh_token') === 'OLD') {
-          if ((f.get('scope') ?? '').includes('Files.ReadWrite.All')) return json({ error: 'invalid_grant', error_description: 'AADSTS65001: The user or administrator has not consented' }, 400);
+          if (/Files\.ReadWrite\.All|Sites\.Read\.All/.test(f.get('scope') ?? '')) return json({ error: 'invalid_grant', error_description: 'AADSTS65001: The user or administrator has not consented' }, 400);
           return json({ access_token: 'LEGACY-AT', refresh_token: 'OLD2' });
         }
         return json({ error: 'invalid_grant', error_description: 'AADSTS700082: expired' }, 400);
@@ -94,14 +98,25 @@ test('a tenant linked before the write rights keeps working on its old rights', 
   const { encrypt } = await import('./crypto');
   const before = refreshCalls;
   assert.equal(await graphAccessToken(userId, 'tenant-123', encrypt(JSON.stringify({ refresh_token: 'OLD' }))), 'LEGACY-AT');
-  assert.equal(refreshCalls - before, 2, 'new set first, then the old set');
+  assert.equal(refreshCalls - before, 3, 'new set first, then the older sets');
 });
 
-test('scopes cover mail (own + shared), OneDrive and deploying Intune apps', async () => {
+test('scopes manage mail (own + shared), OneDrive, SharePoint, calendar and deploy Intune apps; tenant stays read-only', async () => {
   const { M365_SCOPES } = await import('./m365');
-  for (const s of ['Mail.Read', 'Mail.Read.Shared', 'Files.ReadWrite.All', 'Calendars.Read', 'DeviceManagementApps.ReadWrite.All', 'Group.Read.All']) {
+  for (const s of ['Mail.ReadWrite', 'Mail.ReadWrite.Shared', 'Mail.Send', 'Mail.Send.Shared', 'Files.ReadWrite.All', 'Sites.ReadWrite.All', 'Calendars.ReadWrite', 'DeviceManagementApps.ReadWrite.All', 'Group.Read.All']) {
     assert.ok(M365_SCOPES.split(' ').includes(`https://graph.microsoft.com/${s}`), s);
   }
-  assert.ok(!M365_SCOPES.includes('Mail.Send'), 'no sending mail');
-  assert.ok(!M365_SCOPES.includes('Calendars.ReadWrite'), 'calendar stays read-only');
+  assert.ok(!M365_SCOPES.includes('Directory.ReadWrite'), 'tenant directory stays read-only');
+  assert.ok(!M365_SCOPES.includes('User.ReadWrite.All'), 'users stay read-only');
+});
+
+test('read mode asks a token with only read rights and never falls back to write rights', async () => {
+  const { graphAccessToken, M365_READ_SCOPES, M365_SCOPES } = await import('./m365');
+  const { encrypt } = await import('./crypto');
+  assert.ok(!/ReadWrite|Send/.test(M365_READ_SCOPES), 'read set has no write rights');
+  for (const s of M365_READ_SCOPES.split(' ')) assert.ok(M365_SCOPES.split(' ').includes(s), `consented at link: ${s}`);
+  assert.equal(await graphAccessToken(userId, 'tenant-123', encrypt(JSON.stringify({ refresh_token: 'RO' })), 'read'), 'READ-AT');
+  const before = refreshCalls;
+  await assert.rejects(graphAccessToken(userId, 'tenant-123', encrypt(JSON.stringify({ refresh_token: 'OLD' })), 'read'), /koppeling|opnieuw/);
+  assert.equal(refreshCalls - before, 1, 'no fallback to an older set');
 });

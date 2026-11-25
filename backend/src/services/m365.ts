@@ -1,8 +1,9 @@
 /**
  * Microsoft 365 / Entra ID tenants as connectors, via the OAuth device-code flow.
  * Client: "Microsoft Graph Command Line Tools" (a Microsoft public client, the same one Graph PowerShell
- * uses), so no app registration is needed. Delegated Graph scopes: read-only, except adding/assigning
- * Intune apps and writing files in OneDrive/SharePoint the account itself may edit; one connector per tenant.
+ * uses), so no app registration is needed. Delegated Graph scopes: tenant data read-only; the account's own
+ * mail, shared mailboxes, OneDrive/SharePoint and calendar can be managed (only what the account itself may);
+ * Intune apps can be added and assigned. One connector per tenant.
  */
 import { query } from '../db';
 import { encrypt, decrypt } from './crypto';
@@ -13,19 +14,32 @@ const BASE_SCOPES = [
   'AuditLog.Read.All', 'Reports.Read.All', 'Policy.Read.All',
   'DeviceManagementManagedDevices.Read.All', 'DeviceManagementConfiguration.Read.All',
   'DeviceManagementApps.ReadWrite.All', // add + assign Intune apps (only after the user confirms)
-  'Mail.Read', 'Mail.Read.Shared', // own mailbox + shared mailboxes this account may open
 ];
 const toScope = (list: string[]) => list.map((s) => (s === 'offline_access' ? s : `https://graph.microsoft.com/${s}`)).join(' ');
-export const M365_SCOPES = toScope([...BASE_SCOPES,
-  'Files.ReadWrite.All', // OneDrive and SharePoint files this account can open, and write where it may edit
-  'Calendars.Read', // own calendar (planning, hours)
-]);
 /** Read rights: what an agent set to "Lezen" gets (a token with only these, so it cannot write). */
-export const M365_READ_SCOPES = toScope(['offline_access', 'User.Read', 'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
-  'AuditLog.Read.All', 'Reports.Read.All', 'Policy.Read.All', 'DeviceManagementManagedDevices.Read.All', 'DeviceManagementConfiguration.Read.All',
-  'DeviceManagementApps.Read.All', 'Mail.Read', 'Mail.Read.Shared', 'Files.Read.All', 'Calendars.Read']);
-/** What tenants linked before 2026-11-20 consented to; their refresh keeps working until they link again. */
-const LEGACY_SCOPES = toScope([...BASE_SCOPES, 'Files.Read.All']);
+const READ_ONLY = [
+  'offline_access', 'User.Read', 'User.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Organization.Read.All',
+  'AuditLog.Read.All', 'Reports.Read.All', 'Policy.Read.All',
+  'DeviceManagementManagedDevices.Read.All', 'DeviceManagementConfiguration.Read.All', 'DeviceManagementApps.Read.All',
+  'Mail.Read', 'Mail.Read.Shared', 'Files.Read.All', 'Sites.Read.All', 'Calendars.Read', 'Calendars.Read.Shared', 'Contacts.Read',
+];
+export const M365_READ_SCOPES = toScope(READ_ONLY);
+/** Full set the user consents to when linking (also the read rights, so a read-only token can be asked for later). */
+export const M365_SCOPES = toScope([...new Set([...BASE_SCOPES, ...READ_ONLY,
+  'Mail.ReadWrite', 'Mail.ReadWrite.Shared', // manage own mailbox + shared mailboxes this account may open
+  'Mail.Send', 'Mail.Send.Shared', // send (also as/on behalf of a shared mailbox where the account may)
+  'Files.ReadWrite.All', // OneDrive and SharePoint files this account can open, and write where it may edit
+  'Sites.ReadWrite.All', // SharePoint sites and lists this account can open
+  'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared', // own and shared calendars
+  'Contacts.ReadWrite',
+])]);
+/** Earlier scope sets, newest first: a tenant linked before keeps working with what it consented to until it links again. */
+const OLDER_SCOPES = [
+  toScope([...BASE_SCOPES, 'Mail.Read', 'Mail.Read.Shared', 'Files.ReadWrite.All', 'Calendars.Read']), // 2026-11-20 .. 2026-11-25
+  toScope([...BASE_SCOPES, 'Mail.Read', 'Mail.Read.Shared', 'Files.Read.All']), // before 2026-11-20
+];
+const consentMissing = (t: Record<string, unknown>) =>
+  !t.access_token && /AADSTS65001|consent|invalid_scope|AADSTS70000/i.test(String(t.error_description ?? t.error ?? ''));
 
 const loginBase = () => process.env.M365_LOGIN_BASE ?? 'https://login.microsoftonline.com';
 const graphBase = () => process.env.M365_GRAPH_BASE ?? 'https://graph.microsoft.com';
@@ -142,21 +156,27 @@ export async function graphAccessToken(userId: string, tenantId: string, credent
     grant_type: 'refresh_token', client_id: M365_CLIENT_ID, refresh_token, scope,
   });
   if (mode === 'read') {
-    // read-only run (an agent set to "Lezen"): a token with only read rights; if that is not possible, the normal path below
+    // read-only run (an agent set to "Lezen"): never fall back to a set with write rights
     const r = await refresh(M365_READ_SCOPES);
-    if (r.access_token) {
-      if (r.refresh_token && r.refresh_token !== refresh_token) {
-        await query(`UPDATE connectors SET credentials_enc = $3, last_tested_at = now()
-                      WHERE user_id = $1 AND type = 'm365' AND config->>'tenantId' = $2`,
-          [userId, tenantId, encrypt(JSON.stringify({ refresh_token: r.refresh_token }))]);
-      }
-      return String(r.access_token);
+    if (!r.access_token) {
+      throw new Error(consentMissing(r)
+        ? 'Alleen-lezen vraagt een nieuwe koppeling van de tenant (Instellingen > Microsoft 365)'
+        : 'Microsoft 365-login verlopen; koppel de tenant opnieuw');
     }
+    if (r.refresh_token && r.refresh_token !== refresh_token) {
+      await query(`UPDATE connectors SET credentials_enc = $3, last_tested_at = now()
+                    WHERE user_id = $1 AND type = 'm365' AND config->>'tenantId' = $2`,
+        [userId, tenantId, encrypt(JSON.stringify({ refresh_token: r.refresh_token }))]);
+    }
+    return String(r.access_token);
   }
   let t = await refresh(M365_SCOPES);
-  // linked before the new rights existed: no consent for them yet, so keep the old set until the user links again
-  if (!t.access_token && /AADSTS65001|consent|invalid_scope|AADSTS70000/i.test(String(t.error_description ?? t.error ?? ''))) {
-    t = await refresh(LEGACY_SCOPES);
+  // linked before the new rights existed: no consent for them yet, so keep an older set until the user links again
+  let limited = false;
+  for (const older of OLDER_SCOPES) {
+    if (!consentMissing(t)) break;
+    t = await refresh(older);
+    limited = true;
   }
   if (!t.access_token) {
     await query(`UPDATE connectors SET test_status = 'error', test_message = $3, last_tested_at = now()
@@ -169,6 +189,8 @@ export async function graphAccessToken(userId: string, tenantId: string, credent
                   WHERE user_id = $1 AND type = 'm365' AND config->>'tenantId' = $2`,
       [userId, tenantId, encrypt(JSON.stringify({ refresh_token: t.refresh_token }))]);
   }
+  await query(`UPDATE connectors SET test_message = $3 WHERE user_id = $1 AND type = 'm365' AND config->>'tenantId' = $2`,
+    [userId, tenantId, limited ? 'Beperkte rechten: koppel opnieuw om mail, agenda en SharePoint te beheren' : null]).catch(() => { /* optional */ });
   return String(t.access_token);
 }
 

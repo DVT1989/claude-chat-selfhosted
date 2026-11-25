@@ -61,7 +61,9 @@ export default function ProfileSettings() {
   const [spellOn, setSpellOn] = useState(user?.preferences?.spellcheck !== false);
   const [spellLang, setSpellLang] = useState<'nl' | 'en' | 'auto'>(user?.preferences?.spell_lang ?? 'nl');
   const [bgMotion, setBgMotion] = useState<boolean>(user?.preferences?.bg_motion ?? true);
+  const [promptSuggest, setPromptSuggest] = useState<boolean>(user?.preferences?.prompt_suggestions ?? false);
   const [remoteNotice, setRemoteNotice] = useState<boolean>(user?.preferences?.remote_notice ?? true);
+  const [renderHosts, setRenderHosts] = useState<string>(user?.preferences?.render_hosts ?? '');
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [defaultModelId, setDefaultModelId] = useState<string>('sonnet');
 
@@ -248,6 +250,16 @@ export default function ProfileSettings() {
     document.documentElement.style.setProperty('--accent', accentColor || DEFAULT_ACCENT);
   }, [accentColor]);
 
+  // Save the mode right away, so it is kept without pressing Opslaan
+  function chooseThemeMode(m: ThemeMode) {
+    setThemeMode(m);
+    try { localStorage.setItem('theme_mode', m); } catch { /* ignore */ }
+    if (!user || m === user.theme_mode) return;
+    authApi.updateProfile({ theme_mode: m })
+      .then((res) => { const u = (res as { user?: User }).user; setUser(u ?? { ...user, theme_mode: m }); })
+      .catch(() => {});
+  }
+
   function handleHexChange(v: string) {
     let val = v.trim();
     if (val && !val.startsWith('#')) val = '#' + val;
@@ -280,7 +292,7 @@ export default function ProfileSettings() {
         accent_color: accentColor !== (user?.accent_color ?? DEFAULT_ACCENT) ? accentColor : undefined,
         avatar: avatarPreview !== user?.avatar ? (avatarPreview ?? null) : undefined,
         default_model: newDefaultModel !== currentDefaultModel ? newDefaultModel : undefined,
-        preferences: { spellcheck: spellOn, spell_lang: spellLang, bg_motion: bgMotion, remote_notice: remoteNotice },
+        preferences: { spellcheck: spellOn, spell_lang: spellLang, bg_motion: bgMotion, remote_notice: remoteNotice, prompt_suggestions: promptSuggest, render_hosts: renderHosts },
       });
       const updated = (res as { ok: boolean; user?: User }).user;
       if (updated && user) setUser(updated);
@@ -367,7 +379,7 @@ export default function ProfileSettings() {
           <label className="block text-sm text-(--muted) mb-3">Thema</label>
           <div className="grid grid-cols-3 gap-2">
             {THEME_MODES.map((m) => (
-              <button key={m.id} type="button" onClick={() => setThemeMode(m.id)}
+              <button key={m.id} type="button" onClick={() => chooseThemeMode(m.id)}
                 className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-[border-color,background-color,color] ${
                   themeMode === m.id
                     ? 'border-(--accent) ring-1 ring-(--accent)'
@@ -443,6 +455,27 @@ export default function ProfileSettings() {
             </button>
             <span className="text-sm text-(--text)">{bgMotion ? 'Aan: de gekleurde bollen bewegen rustig' : 'Uit: stilstaande achtergrond'}</span>
           </div>
+        </div>
+
+        {/* Prompt suggestions as ghost text in the composer */}
+        <div>
+          <label className="block text-sm text-(--muted) mb-1.5">Promptsuggesties</label>
+          <div className="flex items-center gap-3">
+            <button type="button" role="switch" aria-checked={promptSuggest} onClick={() => setPromptSuggest((v) => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${promptSuggest ? 'bg-(--accent)' : 'bg-(--border)'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${promptSuggest ? 'translate-x-5' : ''}`} />
+            </button>
+            <span className="text-sm text-(--text)">{promptSuggest ? 'Aan: na een antwoord verschijnt een voorstel in het invoerveld (Tab of tik om over te nemen)' : 'Uit: geen voorstellen'}</span>
+          </div>
+        </div>
+
+        {/* Hosts list for screenshots of sites on this Docker host */}
+        <div>
+          <label htmlFor="render-hosts" className="block text-sm text-(--muted) mb-1.5">Hostlijst voor screenshots</label>
+          <textarea id="render-hosts" value={renderHosts} onChange={(e) => setRenderHosts(e.target.value)} rows={4} maxLength={4000} spellCheck={false}
+            placeholder={'# DOEL NAAM [NAAM ...]\nhttp://docker-host:8080 mijnsite.nl www.mijnsite.nl\n192.168.1.20 test.klant.nl'}
+            className="w-full bg-(--input) border border-(--border) rounded-lg px-4 py-3 text-(--text) text-sm font-mono focus:outline-none focus:border-(--accent) transition-colors" />
+          <p className="mt-1.5 text-xs text-(--muted)">Zoals een hosts-bestand: Claude opent deze domeinen bij een screenshot op het opgegeven adres, zodat je een site op deze server of in het netwerk test voordat de DNS omgaat. docker-host is de server zelf; voeg :poort toe en eventueel http:// of https://.</p>
         </div>
 
         {/* Remote desktop: notice on the PC */}

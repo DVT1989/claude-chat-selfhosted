@@ -2,7 +2,33 @@ import { EventEmitter } from 'events';
 import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { getUserHomeDir, getValidAccessToken } from './claudeCode';
+import { chownRun } from './runUsers';
 import { createUsageReader, type UsageRecord } from './usageCache';
+import { query } from '../db';
+
+/** Chat account choice of a user (users.preferences.account_switch). */
+export interface AccountSwitch { auto: boolean; slots: number[] | null; fixed: number }
+export const DEFAULT_SWITCH: AccountSwitch = { auto: true, slots: null, fixed: 0 };
+
+export async function getAccountSwitch(userId: string): Promise<AccountSwitch> {
+  try {
+    const r = await query<{ v: Partial<AccountSwitch> | null }>("SELECT preferences->'account_switch' AS v FROM users WHERE id = $1", [userId]);
+    const v = r.rows[0]?.v;
+    if (!v || typeof v !== 'object') return DEFAULT_SWITCH;
+    return {
+      auto: v.auto !== false,
+      slots: Array.isArray(v.slots) && v.slots.length ? v.slots.filter((n) => Number.isInteger(n) && n >= 0) : null,
+      fixed: Number.isInteger(v.fixed) && (v.fixed as number) >= 0 ? (v.fixed as number) : 0,
+    };
+  } catch { return DEFAULT_SWITCH; }
+}
+
+/** Slots a user's own chats may use; null = all. Unknown slots are ignored by pickAccount (then all). */
+export async function chatSlots(userId: string): Promise<number[] | null> {
+  const c = await getAccountSwitch(userId);
+  if (!c.auto) return [c.fixed];
+  return c.slots;
+}
 
 /**
  * Several Claude subscriptions per user. Account 1 is the login in the user's home
@@ -14,8 +40,6 @@ import { createUsageReader, type UsageRecord } from './usageCache';
 
 export const SWITCH_AT = 95;
 const USAGE_TTL_MS = 60_000;
-const CLAUDE_UID = 1001;
-const CLAUDE_GID = 1001;
 
 export interface UsageWindow { pct: number; resetAt: string | null }
 export interface AnthropicUsage {
@@ -88,9 +112,9 @@ export function ensureAccountDir(userId: string, slot: number): string {
   const dir = accountDir(userId, slot);
   if (slot > 0 && !existsSync(dir)) {
     const root = accountsRoot(userId);
-    if (!existsSync(root)) { mkdirSync(root, { mode: 0o700 }); chownSync(root, CLAUDE_UID, CLAUDE_GID); }
+    if (!existsSync(root)) { mkdirSync(root, { mode: 0o700 }); chownRun(root); }
     mkdirSync(dir, { mode: 0o700 });
-    chownSync(dir, CLAUDE_UID, CLAUDE_GID);
+    chownRun(dir);
   }
   return dir;
 }
@@ -225,6 +249,8 @@ export interface PickedAccount {
 export async function pickAccount(userId: string, allowed: number[] | null = null): Promise<PickedAccount> {
   const home = getUserHomeDir(userId);
   const all = listAccounts(userId);
+  // no agent limit: the user's own choice (automatic switching over all or chosen accounts, or one fixed account)
+  if (!allowed?.length && all.length > 1) allowed = await chatSlots(userId);
   // an agent limited to certain accounts (agents.account_slots); none of them linked any more = all
   const only = allowed?.length ? all.filter((a) => allowed.includes(a.slot)) : [];
   const accounts = only.length ? only : all;
@@ -269,7 +295,7 @@ export function usableAt(usage: AnthropicUsage | null, limitedUntil: number, now
   return at;
 }
 
-export interface AccountOverview { slot: number; email: string | null; plan: string | null; usage: AnthropicUsage | null; limited: boolean; active: boolean; usableAt: string | null }
+export interface AccountOverview { slot: number; email: string | null; plan: string | null; usage: AnthropicUsage | null; limited: boolean; active: boolean; usableAt: string | null; /** part of the user's chat choice */ inUse: boolean }
 
 /** All accounts with their usage and which one the next message would use (read-only). */
 export async function accountsOverview(userId: string, opts: { swr?: boolean; fresh?: boolean } = {}): Promise<AccountOverview[]> {
@@ -279,17 +305,20 @@ export async function accountsOverview(userId: string, opts: { swr?: boolean; fr
     const usage = await accountUsage(a.dir, opts);
     return { ...a, usage, load: load(usage), limitedUntil: lockFor(a.dir, usage) };
   }));
-  const active = chooseAccount(rated).slot;
+  const allowed = accounts.length > 1 ? await chatSlots(userId) : null;
+  const chosen = allowed ? rated.filter((a) => allowed.includes(a.slot)) : [];
+  const pool = chosen.length ? chosen : rated;
+  const active = chooseAccount(pool).slot;
   const now = Date.now();
   return rated.map((a) => {
     const at = usableAt(a.usage, a.limitedUntil, now);
-    return { slot: a.slot, email: a.email, plan: a.plan, usage: a.usage, limited: a.limitedUntil > now, active: a.slot === active, usableAt: at > now ? new Date(at).toISOString() : null };
+    return { slot: a.slot, email: a.email, plan: a.plan, usage: a.usage, limited: a.limitedUntil > now, active: a.slot === active, usableAt: at > now ? new Date(at).toISOString() : null, inUse: pool.includes(a) };
   });
 }
 
 /** The first moment any linked account can take a message again (ms), or null when one has room now. */
 export async function earliestRoom(userId: string): Promise<number | null> {
-  const list = await accountsOverview(userId);
+  const list = (await accountsOverview(userId)).filter((a) => a.inUse);
   if (!list.length || list.some((a) => !a.usableAt)) return null;
   return Math.min(...list.map((a) => Date.parse(a.usableAt!)));
 }
@@ -297,12 +326,12 @@ export async function earliestRoom(userId: string): Promise<number | null> {
 /** After a limit hit: is there another linked subscription the answer can continue on? */
 /** Clear room on some account (after a manual reset or a new window): a scheduled resume may start early. */
 export async function hasRoomNow(userId: string): Promise<boolean> {
-  const list = await accountsOverview(userId);
+  const list = (await accountsOverview(userId)).filter((a) => a.inUse);
   // same line as the account choice (chooseAccount): an account under SWITCH_AT takes messages
   return list.some((a) => !a.limited && load(a.usage) < SWITCH_AT);
 }
 
 export async function hasRoomElsewhere(userId: string): Promise<boolean> {
-  const list = await accountsOverview(userId);
+  const list = (await accountsOverview(userId)).filter((a) => a.inUse);
   return list.length > 1 && list.some((a) => a.active && !a.limited);
 }

@@ -267,7 +267,7 @@ export default function DevicesView({ mode }: { mode: 'monitor' | 'manage' }) {
                   <div className="text-sm font-medium text-(--text)">Windows</div>
                   <CopyLine text={`irm "${origin}/api/devices/download/windows.ps1?code=${enroll.code}" | iex`} />
                   <p className="text-xs text-(--muted) break-words">Plakken in PowerShell als administrator: installeert en koppelt zonder SmartScreen-meldingen. Opnieuw uitvoeren werkt als update.</p>
-                  <a href="/api/devices/download/windows" className="text-xs text-(--accent) hover:underline">Of de installer downloaden{data?.latestAgent ? ` (${data.latestAgent})` : ''}</a>
+                  <a href={`/api/devices/download/windows?code=${encodeURIComponent(enroll.code)}`} className="text-xs text-(--accent) hover:underline">Of de installer downloaden{data?.latestAgent ? ` (${data.latestAgent})` : ''}</a>
                 </div>
                 <div className="space-y-2 min-w-0">
                   <div className="text-sm font-medium text-(--text)">Mac (Terminal)</div>

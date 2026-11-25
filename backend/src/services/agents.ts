@@ -19,8 +19,16 @@ export interface Agent {
   visibility: 'private' | 'selected' | 'all';
   share_users: string[]; share_groups: string[];
   owner_id: string;
+  /** Connectors this agent may use (own agents only; empty for agents shared by others) */
+  connector_ids?: string[];
   /** Name of the owner when this agent is shared with the user by someone else; null for own agents */
   shared_by: string | null;
+  /** Whose Claude account runs this agent for people it is shared with: their own, or the owner's subscription */
+  share_account: 'user' | 'owner';
+  /** With share_account owner: when the owner's account is full, fall back to the user's own account */
+  share_fallback: boolean;
+  /** Only for non-owners with share_account owner: is the owner's account full (no usage numbers or e-mail) */
+  owner_account_state?: { full: boolean; usableAt?: string };
 }
 
 export async function ensureAgentsSchema(): Promise<void> {
@@ -48,6 +56,10 @@ export async function ensureAgentsSchema(): Promise<void> {
   // sharing by admins: visibility + chosen users/groups; a shared agent always runs with the account of whoever uses it
   await query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private',
     ADD COLUMN IF NOT EXISTS share_users UUID[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS share_groups UUID[] NOT NULL DEFAULT '{}'`);
+  await query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS share_account TEXT NOT NULL DEFAULT 'user',
+    ADD COLUMN IF NOT EXISTS share_fallback BOOLEAN NOT NULL DEFAULT TRUE`);
+  await query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agents_share_account_chk') THEN
+    ALTER TABLE agents ADD CONSTRAINT agents_share_account_chk CHECK (share_account IN ('user','owner')); END IF; END $$`);
   await query(`CREATE TABLE IF NOT EXISTS user_groups (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name TEXT NOT NULL UNIQUE,
@@ -56,6 +68,19 @@ export async function ensureAgentsSchema(): Promise<void> {
       group_id UUID NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       PRIMARY KEY (group_id, user_id))`);
+  // connectors an agent may use; for a shared agent they ride along with whoever runs it (the owner's connectors)
+  await query(`CREATE TABLE IF NOT EXISTS agent_connectors (
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      connector_id UUID NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+      PRIMARY KEY (agent_id, connector_id))`);
+  // Microsoft 365: the agent switch is the access (once): switch on without level -> 'read'; level without switch -> switch on
+  await query(`UPDATE connectors c SET config = config || jsonb_build_object('agent_access_v', 3, 'agent_access',
+      COALESCE(config->'agent_access', '{}'::jsonb) || COALESCE((SELECT jsonb_object_agg(ac.agent_id::text, 'read') FROM agent_connectors ac
+        WHERE ac.connector_id = c.id AND NOT (COALESCE(config->'agent_access', '{}'::jsonb) ? ac.agent_id::text)), '{}'::jsonb))
+    WHERE c.type = 'm365' AND COALESCE((config->>'agent_access_v')::int, 0) < 3`).catch(() => { /* optional */ });
+  await query(`INSERT INTO agent_connectors (agent_id, connector_id)
+      SELECT a.id, c.id FROM connectors c, jsonb_object_keys(COALESCE(c.config->'agent_access', '{}'::jsonb)) k
+        JOIN agents a ON a.id::text = k WHERE c.type = 'm365' ON CONFLICT DO NOTHING`).catch(() => { /* optional */ });
   // per user on/off switch for agents shared by others
   await query(`CREATE TABLE IF NOT EXISTS agent_user_prefs (
       agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -94,7 +119,9 @@ export async function listAgents(userId: string, opts: { ownOnly?: boolean } = {
             CASE WHEN a.user_id = $1 THEN a.knowledge END AS knowledge,
             CASE WHEN a.user_id = $1 THEN a.trained_at END AS trained_at,
             CASE WHEN a.user_id = $1 THEN a.trained_conversations ELSE 0 END AS trained_conversations,
-            CASE WHEN a.user_id = $1 THEN a.account_slots END AS account_slots,
+            CASE WHEN a.user_id = $1 THEN a.account_slots END AS account_slots, a.account_slots AS owner_slots,
+            a.share_account, a.share_fallback,
+            CASE WHEN a.user_id = $1 THEN COALESCE((SELECT array_agg(ac.connector_id::text) FROM agent_connectors ac WHERE ac.agent_id = a.id), '{}') ELSE '{}' END AS connector_ids,
             CASE WHEN a.user_id = $1 THEN NULL ELSE u.name END AS shared_by
      FROM agents a JOIN users u ON u.id = a.user_id
      LEFT JOIN agent_user_prefs p ON p.agent_id = a.id AND p.user_id = $1
@@ -103,7 +130,28 @@ export async function listAgents(userId: string, opts: { ownOnly?: boolean } = {
             OR EXISTS (SELECT 1 FROM user_group_members m WHERE m.user_id = $1 AND m.group_id = ANY(a.share_groups))))))`}
      ORDER BY (a.user_id = $1) DESC, a.created_at`, [userId]);
   const seen = new Set<string>();
-  return r.rows.filter((a) => (seen.has(a.slug) ? false : (seen.add(a.slug), true)));
+  const list = r.rows.filter((a) => (seen.has(a.slug) ? false : (seen.add(a.slug), true)));
+  // the owner's account state for agents that run on the owner's subscription (no usage numbers, no e-mail)
+  const states = new Map<string, { full: boolean; usableAt?: string }>();
+  for (const a of list as Array<Agent & { owner_slots?: number[] | null }>) {
+    if (a.owner_id !== userId && a.share_account === 'owner') {
+      const key = `${a.owner_id}:${(a.owner_slots ?? []).join(',')}`;
+      if (!states.has(key)) states.set(key, await ownerAccountState(a.owner_id, a.owner_slots ?? null).catch(() => ({ full: false })));
+      a.owner_account_state = states.get(key);
+    }
+    delete a.owner_slots;
+  }
+  return list;
+}
+
+/** Is the owner's account (the slots the agent may use; null = all) full right now? Never exposes usage figures. */
+export async function ownerAccountState(ownerId: string, slots: number[] | null): Promise<{ full: boolean; usableAt?: string }> {
+  const { accountsOverview } = await import('./claudeAccounts');
+  let list = await accountsOverview(ownerId, { swr: true });
+  if (slots?.length) { const f = list.filter((a) => slots.includes(a.slot)); if (f.length) list = f; }
+  if (!list.length) return { full: true }; // no account linked (any more)
+  if (list.some((a) => !a.usableAt)) return { full: false };
+  return { full: true, usableAt: list.map((a) => a.usableAt!).sort()[0] };
 }
 
 /** A free slug for this user's agent name (the Claude Code subagent type). */
@@ -291,8 +339,56 @@ export async function accountSlotsForConversation(conversationId: string): Promi
 }
 
 
+export interface RunAccount {
+  /** whose Claude account(s) the run takes the login from (credentials only; home and workspace stay the user's) */
+  accountUserId: string | null;
+  slots: number[] | null;
+  /** set when the run uses the owner's subscription: for the audit line */
+  viaOwner?: { agentId: string; agentName: string; ownerId: string };
+  /** set when the owner's account is full and the run falls back to the user's own account */
+  fallback?: { owner: string; usableAt?: string };
+}
+
+function hhmm(iso?: string): string {
+  return iso ? new Date(iso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam' }) : '';
+}
+
+/**
+ * Which account runs this conversation (workplace or task of an agent). Own agent: its account_slots.
+ * Agent shared by someone else with share_account owner and still accessible: the owner's account(s);
+ * when those are full, unlinked or the owner is gone: the user's own account (share_fallback) or an error.
+ * Only the login of the owner is used, never the owner's home, workspace, memory or connectors.
+ */
+export async function resolveRunAccount(conversationId: string): Promise<RunAccount> {
+  const none: RunAccount = { accountUserId: null, slots: null };
+  try {
+    const r = await query<{ slots: number[] | null; owner_id: string; user_id: string; share_account: string; share_fallback: boolean;
+      id: string; name: string; owner_name: string; has_access: boolean }>(
+      `SELECT a.id, a.name, a.account_slots AS slots, a.user_id AS owner_id, c.user_id, a.share_account, a.share_fallback, u.name AS owner_name,
+              (u.is_active AND (a.visibility = 'all' OR (a.visibility = 'selected' AND (c.user_id = ANY(a.share_users)
+                OR EXISTS (SELECT 1 FROM user_group_members m WHERE m.user_id = c.user_id AND m.group_id = ANY(a.share_groups)))))) AS has_access
+         FROM conversations c
+         LEFT JOIN scheduled_tasks t ON t.id::text = c.metadata->>'task_id'
+         JOIN agents a ON a.id::text = COALESCE(c.metadata->>'delegated_agent_id', t.agent_id::text)
+         JOIN users u ON u.id = a.user_id
+       WHERE c.id = $1`, [conversationId]);
+    const a = r.rows[0];
+    if (!a) return none;
+    if (a.owner_id === a.user_id) return { accountUserId: null, slots: a.slots?.length ? a.slots : null };
+    if (a.share_account !== 'owner' || !a.has_access) return none;
+    const slots = a.slots?.length ? a.slots : null;
+    const st = await ownerAccountState(a.owner_id, slots);
+    if (!st.full) return { accountUserId: a.owner_id, slots, viaOwner: { agentId: a.id, agentName: a.name, ownerId: a.owner_id } };
+    if (a.share_fallback) return { accountUserId: null, slots: null, fallback: { owner: a.owner_name, usableAt: st.usableAt } };
+    throw new AppError(503, st.usableAt ? `Tijdelijk niet beschikbaar, weer bruikbaar om ${hhmm(st.usableAt)}` : 'Tijdelijk niet beschikbaar');
+  } catch (e) {
+    if (e instanceof AppError) throw e;
+    return none;
+  }
+}
+
 // ── Sharing (admins) ────────────────────────────────────────────
-export interface ShareInput { visibility: 'private' | 'selected' | 'all'; users: string[]; groups: string[] }
+export interface ShareInput { visibility: 'private' | 'selected' | 'all'; users: string[]; groups: string[]; account_mode?: 'user' | 'owner'; fallback?: boolean }
 
 /** Set who can use one of the owner's agents. Users and groups must exist; the owner is never in the list. */
 export async function setAgentSharing(ownerId: string, agentId: string, s: ShareInput): Promise<void> {
@@ -306,9 +402,30 @@ export async function setAgentSharing(ownerId: string, agentId: string, s: Share
     const r = await query('SELECT 1 FROM user_groups WHERE id = ANY($1::uuid[])', [groups]);
     if (r.rowCount !== groups.length) throw new AppError(400, 'Onbekende groep');
   }
-  const r = await query('UPDATE agents SET visibility = $3, share_users = $4::uuid[], share_groups = $5::uuid[] WHERE id = $1 AND user_id = $2',
-    [agentId, ownerId, s.visibility, users, groups]);
+  // private: nobody else runs it, so the owner choice resets; undefined keeps the stored value
+  const mode = s.visibility === 'private' ? 'user' : s.account_mode ?? null;
+  const r = await query(`UPDATE agents SET visibility = $3, share_users = $4::uuid[], share_groups = $5::uuid[],
+      share_account = COALESCE($6, share_account), share_fallback = COALESCE($7, share_fallback) WHERE id = $1 AND user_id = $2`,
+    [agentId, ownerId, s.visibility, users, groups, mode, s.fallback ?? null]);
   if (!r.rowCount) throw new AppError(404, 'Agent niet gevonden');
+}
+
+/** Choose the connectors (of the owner) an agent may use. Replaces the list. */
+export async function setAgentConnectors(ownerId: string, agentId: string, connectorIds: string[]): Promise<void> {
+  const ids = [...new Set(connectorIds)];
+  const a = await query('SELECT 1 FROM agents WHERE id = $1 AND user_id = $2', [agentId, ownerId]);
+  if (!a.rowCount) throw new AppError(404, 'Agent niet gevonden');
+  if (ids.length) {
+    const r = await query('SELECT 1 FROM connectors WHERE id = ANY($1::uuid[]) AND user_id = $2', [ids, ownerId]);
+    if (r.rowCount !== ids.length) throw new AppError(400, 'Onbekende connector');
+  }
+  await query('DELETE FROM agent_connectors WHERE agent_id = $1', [agentId]);
+  if (ids.length) await query('INSERT INTO agent_connectors (agent_id, connector_id) SELECT $1, UNNEST($2::uuid[])', [agentId, ids]);
+  // Microsoft 365: the switch is the access. Switched on = 'read' unless a level is set; switched off = entry removed.
+  await query(`UPDATE connectors c SET config = config || jsonb_build_object('agent_access_v', 2, 'agent_access',
+      CASE WHEN c.id = ANY($3::uuid[]) THEN jsonb_build_object($2::text, COALESCE(config->'agent_access'->>$2::text, 'read')) || (COALESCE(config->'agent_access', '{}'::jsonb) - $2::text)
+           ELSE COALESCE(config->'agent_access', '{}'::jsonb) - $2::text END), updated_at = now()
+    WHERE c.user_id = $1 AND c.type = 'm365'`, [ownerId, agentId, ids]);
 }
 
 /** On/off switch of a shared agent for this user only. */
@@ -319,7 +436,7 @@ export async function setSharedAgentActive(userId: string, agentId: string, acti
     ON CONFLICT (agent_id, user_id) DO UPDATE SET is_active = EXCLUDED.is_active`, [agentId, userId, active]);
 }
 
-/** What the app gets: shared agents without their prompt (read-only for the user). */
+/** What the app gets: shared agents read-only (prompt to look at, without the owner's sharing and connectors). */
 export function agentView(userId: string, list: Agent[]): Agent[] {
-  return list.map((a) => (a.owner_id === userId ? a : { ...a, prompt: '', share_users: [], share_groups: [], visibility: 'private' as const }));
+  return list.map((a) => (a.owner_id === userId ? a : { ...a, share_users: [], share_groups: [], connector_ids: [], visibility: 'private' as const }));
 }

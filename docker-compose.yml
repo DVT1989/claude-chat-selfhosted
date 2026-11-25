@@ -18,7 +18,7 @@ services:
     networks:
       - claude-chat
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -39,7 +39,7 @@ services:
     networks:
       - claude-chat
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -148,7 +148,7 @@ services:
       retries: 5
 
 
-# Self-signed code signing for the Claude Agent (Windows); the key stays on the NAS
+# Self-signed code signing for the Claude Agent (Windows); the key stays on the host
 secrets:
   codesign_key:
     file: ./signing/codesign.key

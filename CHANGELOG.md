@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-25 (port van de andere installatie)
+- [Sam] Overgezet van de andere installatie: reageren op een bericht met swipe of pijltje (verwijzing naar het oorspronkelijke bericht), ontwerpen en pagina's als screenshot in de chat (render, hostlijst in Profiel), pagina Wijzigingen onder Beheer, Gripp- en iCloud-koppeling, skills uploaden, accountkeuze per run, gedeelde projecten zonder eigenaar (geschiedenis, geheugen.md-sync, agents en koppelingen per lid), M365-scopes en alleen-lezen zonder terugval. Niet overgenomen: het palet van de andere installatie; eigen bubbel in een groepschat volgt de accentkleur. Docker-inrichting, keuzelijst en ongelezen-badge van deze NAS behouden (commit 54d52fd) - live ja
+
 ## 2026-11-25 (gedeelde projecten, kleine functies)
 - Ongelezen-badge ook op het tabje Projecten (zichtbaar vanuit Chats); push naar andere leden en badge per project bestonden al, eigen berichten tellen niet mee.
 - Projectchats staan niet meer in de algemene chatlijst, alleen onder hun project.

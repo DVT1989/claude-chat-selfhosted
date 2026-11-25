@@ -8,7 +8,7 @@ import { testConnector } from '../services/connectors';
 
 export const connectorsRouter = Router();
 
-const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack', 'google-search-console', 'ninjaone'] as const;
+const CONNECTOR_TYPES = ['git', 'github', 'ssh', 'sftp', 'ftp', 'smb', 'python', 'sudo', 'focustrack', 'google-search-console', 'ninjaone', 'gripp', 'icloud'] as const;
 type ConnectorType = (typeof CONNECTOR_TYPES)[number];
 
 // ── All routes below require authentication ──────────────────────────────────

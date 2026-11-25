@@ -12,7 +12,7 @@ interface TestResult {
   message: string;
 }
 
-type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack' | 'google-search-console' | 'ninjaone';
+type ConnectorType = 'git' | 'github' | 'ssh' | 'sftp' | 'ftp' | 'smb' | 'python' | 'sudo' | 'focustrack' | 'google-search-console' | 'ninjaone' | 'gripp' | 'icloud';
 
 /** GitHub token: who is it, and may it run Actions (checked on the first repo it can see). */
 async function testGithub(credentials: Record<string, unknown>): Promise<TestResult> {
@@ -66,6 +66,10 @@ export async function testConnector(
         return await testGithub(credentials);
       case 'focustrack':
         return await testFocustrack(config, credentials);
+      case 'icloud':
+        return await (await import('./icloud')).testIcloud(config, credentials);
+      case 'gripp':
+        return await (await import('./gripp')).testGripp(config, credentials);
       case 'ninjaone':
         return await (await import('./ninjaone')).testNinja(config, credentials);
       case 'google-search-console':
@@ -126,21 +130,35 @@ async function testSsh(config: Record<string, unknown>, credentials: Record<stri
 
   if (!host) return { ok: false, message: 'SSH host vereist' };
   if (!user) return { ok: false, message: 'Gebruikersnaam vereist' };
-  if (!password) return { ok: false, message: 'Wachtwoord vereist' };
+  const privateKey = credentials.private_key as string | undefined;
+  if (!password && !privateKey) return { ok: false, message: 'Wachtwoord of private key vereist' };
 
-  // Password via SSHPASS env (sshpass -e), sudo password via stdin: neither shows up in a process list or error text
-  const sshArgs = ['-e', 'ssh',
-    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
-    '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
-    '-p', String(port), `${user}@${host}`];
-  const env = { ...process.env, SSHPASS: password };
+  // Password via SSHPASS env (sshpass -e), sudo password via stdin: neither shows up in a process list or error text.
+  // A private key goes to a temporary 600 file (removed afterwards) and is used with plain ssh.
+  let keyDir: string | undefined;
+  let bin = 'sshpass';
+  let sshArgs: string[];
+  if (privateKey) {
+    keyDir = mkdtempSync(join(tmpdir(), 'sshtest-'));
+    const keyFile = join(keyDir, 'key');
+    writeFileSync(keyFile, normalizeKey(privateKey), { mode: 0o600 });
+    bin = 'ssh';
+    sshArgs = ['-i', keyFile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+      '-p', String(port), `${user}@${host}`];
+  } else {
+    sshArgs = ['-e', 'ssh',
+      '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+      '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
+      '-p', String(port), `${user}@${host}`];
+  }
+  const env = { ...process.env, SSHPASS: password ?? '' };
   const clean = (m: string) => m.split('\n').filter(l => !l.startsWith('Command failed')).join(' ').trim().slice(0, 300);
   try {
-    await execFileAsync('sshpass', [...sshArgs, 'echo ok'], { timeout: 10_000, env });
+    await execFileAsync(bin, [...sshArgs, 'echo ok'], { timeout: 10_000, env });
     const sudoPass = credentials.sudo_password as string | undefined;
     if (sudoPass) {
       try {
-        const run = execFileAsync('sshpass', [...sshArgs,
+        const run = execFileAsync(bin, [...sshArgs,
           "S=$(command -v sudo || ls /usr/bin/sudo /bin/sudo /usr/local/bin/sudo 2>/dev/null | head -1); [ -n \"$S\" ] || { echo NOSUDO; exit 0; }; $S -S -p '' -k whoami 2>/dev/null"],
           { timeout: 10_000, env });
         run.child.stdin?.end(sudoPass + '\n');
@@ -159,6 +177,8 @@ async function testSsh(config: Record<string, unknown>, credentials: Record<stri
       return { ok: false, message: `SSH authenticatie mislukt — controleer gebruikersnaam/wachtwoord` };
     }
     return { ok: false, message: `SSH verbinding mislukt: ${clean(msg)}` };
+  } finally {
+    if (keyDir) rmSync(keyDir, { recursive: true, force: true });
   }
 }
 

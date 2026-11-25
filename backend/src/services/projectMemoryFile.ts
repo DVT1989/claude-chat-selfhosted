@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, statSync, chmodSync, chownSync
 import { join } from 'path';
 import { query } from '../db';
 import { getSharedProjectDir } from './claudeCode';
+import { runUidOf } from './runUsers';
 import { logProjectEvent } from './sharedProjects';
 
 /**
@@ -46,8 +47,9 @@ async function target(projectId: string): Promise<{ path: string; uid: number | 
   if (!p || p.gid == null) return null; // only shared projects use the project memory
   const dir = getSharedProjectDir(projectId);
   if (!existsSync(dir)) return null;
-  const uid: number | null = 1001; // all runs share one OS user here
-  return { path: join(dir, 'geheugen.md'), uid, gid: 1001 };
+  let uid: number | null = null;
+  try { uid = runUidOf(p.user_id); } catch { /* not loaded */ }
+  return { path: join(dir, 'geheugen.md'), uid, gid: p.gid };
 }
 
 function put(path: string, text: string, t: { uid: number | null; gid: number | null }): void {

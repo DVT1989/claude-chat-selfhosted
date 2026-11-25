@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, readlinkSync, symlinkSync, writeFileSync, chownSync, cpSync } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
+import { chownRun, chownRunTree } from './runUsers';
 import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 
@@ -10,8 +11,8 @@ import { AppError } from '../middleware/errorHandler';
  * on the next message.
  */
 
-const CLAUDE_UID = 1001;
-const CLAUDE_GID = 1001;
+/** Marker in a skill folder that is a copy of a skill another admin shares (homes are private, so no symlinks). */
+const SHARED_COPY_MARK = '.shared-copy';
 export const MAX_SKILL_BYTES = 200 * 1024;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -83,7 +84,7 @@ export function listOwnSkills(home: string): OwnSkill[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     try {
-      if (lstatSync(p).isSymbolicLink() || !lstatSync(p).isDirectory()) continue;
+      if (lstatSync(p).isSymbolicLink() || !lstatSync(p).isDirectory() || existsSync(join(p, SHARED_COPY_MARK))) continue;
       const file = join(p, 'SKILL.md');
       if (!existsSync(file)) continue;
       const fm = parseFrontmatter(readFileSync(file, 'utf8'));
@@ -102,18 +103,18 @@ export function saveOwnSkill(home: string, name: string, content: string): void 
   const dir = skillsDir(home);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o755 });
-    chownSync(join(home, '.claude'), CLAUDE_UID, CLAUDE_GID);
-    chownSync(dir, CLAUDE_UID, CLAUDE_GID);
+    chownRun(join(home, '.claude'));
+    chownRun(dir);
   }
   const target = join(dir, name);
   try { if (lstatSync(target).isSymbolicLink()) unlinkSync(target); } catch { /* not there yet */ }
   if (!existsSync(target)) {
     mkdirSync(target, { mode: 0o755 });
-    chownSync(target, CLAUDE_UID, CLAUDE_GID);
+    chownRun(target);
   }
   const file = join(target, 'SKILL.md');
   writeFileSync(file, content, { mode: 0o644 });
-  chownSync(file, CLAUDE_UID, CLAUDE_GID);
+  chownRun(file);
 }
 
 /** Copies a whole skill folder (SKILL.md plus scripts/files) to ~/.claude/skills/<name>, replacing what was there. */
@@ -122,8 +123,8 @@ export function installSkillDir(home: string, name: string, srcDir: string): voi
   const dir = skillsDir(home);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o755 });
-    chownSync(join(home, '.claude'), CLAUDE_UID, CLAUDE_GID);
-    chownSync(dir, CLAUDE_UID, CLAUDE_GID);
+    chownRun(join(home, '.claude'));
+    chownRun(dir);
   }
   const target = join(dir, name);
   try {
@@ -131,12 +132,7 @@ export function installSkillDir(home: string, name: string, srcDir: string): voi
     else rmSync(target, { recursive: true, force: true });
   } catch { /* not there yet */ }
   cpSync(srcDir, target, { recursive: true, verbatimSymlinks: true });
-  chownTree(target);
-}
-
-function chownTree(p: string): void {
-  chownSync(p, CLAUDE_UID, CLAUDE_GID);
-  if (lstatSync(p).isDirectory()) for (const e of readdirSync(p)) chownTree(join(p, e));
+  chownRunTree(target);
 }
 
 /** Removes an own skill. Shared skills (symlinks) cannot be removed this way. Returns false when not found. */
@@ -155,40 +151,66 @@ export interface SharedSkill { name: string; description: string; owner: string;
 
 const homeOf = (userId: string) => join(config.claudeHomesRoot, `user-${userId}`);
 
+export interface SkillShare { visibility: 'private' | 'selected' | 'all'; users: string[]; groups: string[] }
+
 export async function ensureSkillSharingSchema(): Promise<void> {
   await query(`CREATE TABLE IF NOT EXISTS shared_skills (
       owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (owner_id, name))`);
+  // existing rows keep meaning "everyone"
+  await query(`ALTER TABLE shared_skills ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'all',
+    ADD COLUMN IF NOT EXISTS share_users UUID[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS share_groups UUID[] NOT NULL DEFAULT '{}'`);
 }
 
-/** Names of this owner's skills that are shared with everyone. */
-export async function sharedNamesOf(ownerId: string): Promise<Set<string>> {
-  const r = await query<{ name: string }>('SELECT name FROM shared_skills WHERE owner_id = $1', [ownerId]);
-  return new Set(r.rows.map((x) => x.name));
+/** Sharing of this owner's skills, by skill name (skills that are not shared are absent). */
+export async function sharedNamesOf(ownerId: string): Promise<Map<string, SkillShare>> {
+  const r = await query<{ name: string; visibility: string; share_users: string[]; share_groups: string[] }>(
+    'SELECT name, visibility, share_users::text[] AS share_users, share_groups::text[] AS share_groups FROM shared_skills WHERE owner_id = $1', [ownerId]);
+  return new Map(r.rows.map((x) => [x.name, { visibility: x.visibility === 'selected' ? 'selected' : 'all', users: x.share_users ?? [], groups: x.share_groups ?? [] } as SkillShare]));
 }
 
-/** Share (or stop sharing) one of the owner's own skills with everyone. */
-export async function setSkillShared(ownerId: string, name: string, shared: boolean): Promise<void> {
+/** Set who can use one of the owner's own skills: nobody (private), chosen users/groups, or everyone. */
+export async function setSkillShare(ownerId: string, name: string, s: SkillShare): Promise<void> {
   if (!isValidSkillName(name)) throw new AppError(404, 'Skill niet gevonden');
-  if (shared) {
-    const own = listOwnSkills(homeOf(ownerId)).some((s) => s.name === name);
-    if (!own) throw new AppError(404, 'Skill niet gevonden');
-    await query('INSERT INTO shared_skills (owner_id, name) VALUES ($1,$2) ON CONFLICT DO NOTHING', [ownerId, name]);
-  } else {
+  if (s.visibility === 'private') {
     await query('DELETE FROM shared_skills WHERE owner_id = $1 AND name = $2', [ownerId, name]);
+    return;
   }
+  const own = listOwnSkills(homeOf(ownerId)).some((x) => x.name === name);
+  if (!own) throw new AppError(404, 'Skill niet gevonden');
+  const users = s.visibility === 'selected' ? [...new Set(s.users)].filter((u) => u !== ownerId) : [];
+  const groups = s.visibility === 'selected' ? [...new Set(s.groups)] : [];
+  if (users.length) {
+    const r = await query('SELECT 1 FROM users WHERE id = ANY($1::uuid[])', [users]);
+    if (r.rowCount !== users.length) throw new AppError(400, 'Onbekende gebruiker');
+  }
+  if (groups.length) {
+    const r = await query('SELECT 1 FROM user_groups WHERE id = ANY($1::uuid[])', [groups]);
+    if (r.rowCount !== groups.length) throw new AppError(400, 'Onbekende groep');
+  }
+  await query(`INSERT INTO shared_skills (owner_id, name, visibility, share_users, share_groups) VALUES ($1,$2,$3,$4::uuid[],$5::uuid[])
+    ON CONFLICT (owner_id, name) DO UPDATE SET visibility = EXCLUDED.visibility, share_users = EXCLUDED.share_users, share_groups = EXCLUDED.share_groups`,
+    [ownerId, name, s.visibility, users, groups]);
+}
+
+/** Share (or stop sharing) one of the owner's own skills with everyone (old on/off switch). */
+export async function setSkillShared(ownerId: string, name: string, shared: boolean): Promise<void> {
+  await setSkillShare(ownerId, name, { visibility: shared ? 'all' : 'private', users: [], groups: [] });
 }
 
 /**
- * Skills other admins share with everyone, as folders in their home. Own skills of the user win on
+ * Skills other admins share with this user (everyone, or chosen users/groups), as folders in their home. Own skills of the user win on
  * a name clash, and the first sharer wins between two admins. Only skills that still exist are returned.
  */
 export async function listSharedSkills(userId: string): Promise<Array<SharedSkill & { dir: string }>> {
   const r = await query<{ owner_id: string; name: string; owner: string }>(
     `SELECT s.owner_id, s.name, u.name AS owner FROM shared_skills s JOIN users u ON u.id = s.owner_id
-     WHERE s.owner_id <> $1 AND u.is_active ORDER BY s.created_at`, [userId]);
+     WHERE s.owner_id <> $1 AND u.is_active
+       AND (s.visibility = 'all' OR (s.visibility = 'selected' AND ($1::uuid = ANY(s.share_users)
+            OR EXISTS (SELECT 1 FROM user_group_members m WHERE m.user_id = $1 AND m.group_id = ANY(s.share_groups)))))
+     ORDER BY s.created_at`, [userId]);
   const mine = new Set(listOwnSkills(homeOf(userId)).map((x) => x.name));
   const seen = new Set<string>();
   const out: Array<SharedSkill & { dir: string }> = [];
@@ -219,18 +241,30 @@ export async function linkUserSharedSkills(userId: string, home: string): Promis
     if (!existsSync(target)) {
       if (!wanted.size) return;
       mkdirSync(target, { recursive: true, mode: 0o755 });
-      chownSync(join(home, '.claude'), CLAUDE_UID, CLAUDE_GID);
-      chownSync(target, CLAUDE_UID, CLAUDE_GID);
+      chownRun(join(home, '.claude'));
+      chownRun(target);
     }
     for (const name of readdirSync(target)) {
       const p = join(target, name);
-      if (!lstatSync(p).isSymbolicLink()) continue;
-      const to = readlinkSync(p);
-      if (to.startsWith(config.claudeHomesRoot) && wanted.get(name) !== to) unlinkSync(p);
+      const st = lstatSync(p);
+      // old style: symlink into the owner's home (unreadable now that homes are private) or a copy that is no longer shared
+      if (st.isSymbolicLink()) {
+        if (readlinkSync(p).startsWith(config.claudeHomesRoot)) unlinkSync(p);
+      } else if (st.isDirectory() && existsSync(join(p, SHARED_COPY_MARK)) && !wanted.has(name)) {
+        rmSync(p, { recursive: true, force: true });
+      }
     }
     for (const [name, dir] of wanted) {
       const link = join(target, name);
-      try { lstatSync(link); } catch { symlinkSync(dir, link); }
+      try {
+        const st = lstatSync(link);
+        if (!st.isDirectory() || st.isSymbolicLink() || !existsSync(join(link, SHARED_COPY_MARK))) continue; // real own skill / NAS link: leave alone
+      } catch { /* not there yet */ }
+      // copy (the owner's edits reach everyone at the next run)
+      rmSync(link, { recursive: true, force: true });
+      cpSync(dir, link, { recursive: true, verbatimSymlinks: false, dereference: true });
+      writeFileSync(join(link, SHARED_COPY_MARK), dir);
+      chownRunTree(link);
     }
   } catch (err) {
     console.error('[skills] could not link skills shared by admins:', (err as Error).message);

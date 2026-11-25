@@ -10,15 +10,14 @@
  */
 import { execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
-import { createReadStream, existsSync, mkdirSync, copyFileSync, chownSync, writeFileSync, readdirSync, readFileSync, mkdtempSync, rmSync, chmodSync, createWriteStream } from 'fs';
+import { chownRun, loadRunUids } from '../services/runUsers';
+import { createReadStream, existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, readFileSync, mkdtempSync, rmSync, chmodSync, createWriteStream } from 'fs';
 import { once } from 'events';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { createInterface } from 'readline';
 import type { PoolClient } from 'pg';
 
-const UID = 1001;
-const GID = 1001;
 
 export interface BundleMsg { role: 'user' | 'assistant'; content: string; created_at: string; tools: unknown[] }
 export interface BundleSession {
@@ -29,7 +28,7 @@ export interface ImportPaths { homeDir: string; workspaceDir: string; chown: boo
 export interface ImportSummary { created: number; updated: number; followups: number; skipped: number }
 
 function own(p: string, paths: ImportPaths): void {
-  if (paths.chown) chownSync(p, UID, GID);
+  if (paths.chown) chownRun(p);
 }
 
 function mkdirOwned(dir: string, paths: ImportPaths): void {
@@ -237,6 +236,7 @@ async function main(): Promise<void> {
   const u = await pool.query<{ id: string }>(`SELECT id FROM users WHERE split_part(email, '@', 1) = $1`, [user]);
   if (u.rows.length !== 1) throw new Error(`user "${user}" not found (or not unique)`);
   const userId = u.rows[0].id;
+  await loadRunUids();
 
   const dir = mkdtempSync(join(tmpdir(), 'history-'));
   try {

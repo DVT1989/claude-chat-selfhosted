@@ -123,8 +123,9 @@ devicesRouter.get('/download/windows.ps1', (req: Request, res: Response) => {
     Write-Host 'Installeren...'
     $p = Start-Process -FilePath $tmp -ArgumentList '/S' -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "Installer stopte met code $($p.ExitCode)" }
-    if (-not $paired) {
-      Write-Host 'Koppelen...'
+    # a code means: pair with this server, also when an old config.json (other server or removed device) exists
+    if ($Code) {
+      if ($paired) { Write-Host 'Bestaande koppeling gevonden, opnieuw koppelen met deze server...' } else { Write-Host 'Koppelen...' }
       Stop-Service ClaudeAgent -ErrorAction SilentlyContinue
       $out = & $exe enroll --server $Server --code $Code 2>&1
       if ($LASTEXITCODE -ne 0) { throw "Koppelen mislukt: $out" }

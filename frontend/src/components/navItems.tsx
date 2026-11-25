@@ -37,6 +37,7 @@ export const NavIcons = {
   /** two nodes with a two-way link: linked installations */
   groups: (c?: string) => <Icon className={c}><rect x="2" y="3" width="20" height="18" rx="4" /><circle cx="9" cy="10" r="2.5" /><circle cx="15.5" cy="10.5" r="2" /><path d="M5 18a4 4 0 0 1 8 0M13.5 17.5a3 3 0 0 1 5.5-1.6" /></Icon>,
   federation: (c?: string) => <Icon className={c}><rect x="2" y="3" width="8" height="7" rx="2" /><rect x="14" y="14" width="8" height="7" rx="2" /><path d="M6 10v4a3 3 0 0 0 3 3h5M18 14v-4a3 3 0 0 0-3-3h-5" /></Icon>,
+  changelog: (c?: string) => <Icon className={c}><path d="M12 8v4l3 2" /><circle cx="12" cy="12" r="9" /></Icon>,
   backups: (c?: string) => <Icon className={c}><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14a9 3 0 0 0 18 0V5" /><path d="M3 12a9 3 0 0 0 18 0" /></Icon>,
   shield: (c?: string) => <Icon className={c}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z" /><path d="m9 12 2 2 4-4" /></Icon>,
   logout: (c?: string) => <Icon className={c}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></Icon>,
@@ -89,6 +90,7 @@ const COLORS: Record<string, string> = {
   '/settings/adminprompt': '#475569',
   '/settings/admin': '#10b981',
   '/settings/backups': '#14b8a6',
+  '/settings/changelog': '#f59e0b',
   '/settings/installaties': '#8b5cf6',
   '/settings/groepen': '#0ea5e9',
   '/settings/kennis': '#f59e0b',
@@ -150,6 +152,7 @@ export function settingsGroups(l: Labels, isAdmin: boolean): NavGroup[] {
         { href: '/settings/groepen', label: n('groups'), short: n('groups'), icon: NavIcons.groups, tint: 'bg-sky-500' },
       ] },
       { href: '/settings/backups', label: n('backups'), short: n('backups'), icon: NavIcons.backups, tint: 'bg-teal-500' },
+      { href: '/settings/changelog', label: n('changelog'), short: n('changelog'), icon: NavIcons.changelog, tint: 'bg-amber-500' },
     ] }] : []),
   ];
 }

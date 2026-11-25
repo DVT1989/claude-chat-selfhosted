@@ -105,7 +105,7 @@ export const auth = {
   me: () =>
     request<{ user: import('@/types').User }>('/auth/me', { cache: 'no-store' }),
 
-  updateProfile: (data: { name?: string; password?: string; currentPassword?: string; language?: string; avatar?: string | null; theme?: string; default_model?: string | null; theme_mode?: 'light' | 'dark' | 'system'; accent_color?: string; preferences?: { spellcheck?: boolean; spell_lang?: 'nl' | 'en' | 'auto'; bg_motion?: boolean; remote_notice?: boolean } }) =>
+  updateProfile: (data: { name?: string; password?: string; currentPassword?: string; language?: string; avatar?: string | null; theme?: string; default_model?: string | null; theme_mode?: 'light' | 'dark' | 'system'; accent_color?: string; preferences?: { spellcheck?: boolean; spell_lang?: 'nl' | 'en' | 'auto'; bg_motion?: boolean; remote_notice?: boolean; prompt_suggestions?: boolean; render_hosts?: string } }) =>
     request<{ ok: boolean; user?: import('@/types').User }>('/auth/me', { method: 'PUT', body: JSON.stringify(data) }),
 };
 
@@ -204,10 +204,13 @@ export const conversations = {
 export interface QueuedMessage { id: string; content: string; created_at: string; attachment_ids?: string[] }
 
 // ── Claude Code OAuth ─────────────────────────────────────────
+/** Chat account choice: automatic switching over all (slots null) or chosen accounts, or one fixed account. */
+export interface AccountSwitch { auto: boolean; slots: number[] | null; fixed: number }
+
 export interface ClaudeAccountInfo {
   slot: number; email: string | null; plan: string | null;
   usage: { session: UsageWindow | null; weekly: UsageWindow | null } | null;
-  limited: boolean; active: boolean;
+  limited: boolean; active: boolean; inUse?: boolean;
   /** when this account can take a message again; null when it has room now */
   usableAt: string | null;
 }
@@ -219,6 +222,12 @@ export const claudeAuth = {
 
   accounts: () =>
     request<{ accounts: ClaudeAccountInfo[] }>('/claude-auth/accounts'),
+
+  switching: () =>
+    request<AccountSwitch>('/claude-auth/switching'),
+
+  setSwitching: (v: AccountSwitch) =>
+    request<AccountSwitch>('/claude-auth/switching', { method: 'PUT', body: JSON.stringify(v) }),
 
   removeAccount: (slot: number) =>
     request<{ ok: true }>(`/claude-auth/accounts/${slot}`, { method: 'DELETE' }),
@@ -239,6 +248,7 @@ export interface AppUpdateStatus {
   available: boolean; reason: string | null; repo: string | null; branch: string | null;
   current: UpdateCommit | null; latest: UpdateCommit | null; behind: number; ahead: number; dirty: number;
   incoming: UpdateCommit[]; services: string[]; updating: boolean; checkedAt: string;
+  phase?: string | null; lastError?: string | null;
 }
 
 export const admin = {
@@ -408,7 +418,7 @@ export interface SkillsManifest {
   skills: SkillEntry[];
   hooks?: { plugin: string; event: string; what: string }[];
   /** The signed-in user's own skills (~/.claude/skills/<name>/SKILL.md) */
-  own?: { name: string; description: string; sizeKB: number; updatedAt: string; source?: string; shared?: boolean }[];
+  own?: { name: string; description: string; sizeKB: number; updatedAt: string; source?: string; shared?: boolean; share?: { visibility: 'private' | 'selected' | 'all'; users: string[]; groups: string[] } }[];
   /** Skills admins share with everyone (read-only) */
   sharedByOthers?: { name: string; description: string; owner: string; sizeKB: number; updatedAt: string }[];
 }
@@ -418,8 +428,14 @@ export const skills = {
   list: () => request<SkillsManifest>('/skills'),
   add: (data: NewSkill) => request<{ ok: true; name: string }>('/skills', { method: 'POST', body: JSON.stringify(data) }),
   importGithub: (url: string) => request<SkillImportResult>('/skills/github', { method: 'POST', body: JSON.stringify({ url }) }),
+  upload: async (file: File): Promise<SkillImportResult> => {
+    const res = await fetch(`${BASE}/skills/upload?filename=${encodeURIComponent(file.name)}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+    const j = await res.json().catch(() => ({})) as SkillImportResult & { error?: string };
+    if (!res.ok) throw new Error(j.error || `Upload mislukt (HTTP ${res.status})`);
+    return j;
+  },
   remove: (name: string) => request<{ ok: true }>(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  share: (name: string, shared: boolean) => request<{ ok: true; shared: boolean }>(`/skills/${encodeURIComponent(name)}/share`, { method: 'PUT', body: JSON.stringify({ shared }) }),
+  share: (name: string, visibility: 'private' | 'selected' | 'all', users: string[] = [], groups: string[] = []) => request<{ ok: true; shared: boolean }>(`/skills/${encodeURIComponent(name)}/share`, { method: 'PUT', body: JSON.stringify({ visibility, users, groups }) }),
 };
 
 // ── Telegram ─────────────────────────────────────────────────
@@ -533,9 +549,16 @@ export interface AgentDef {
   visibility?: 'private' | 'selected' | 'all';
   share_users?: string[]; share_groups?: string[];
   owner_id?: string;
+  /** Connectors this agent may use (own agents only) */
+  connector_ids?: string[];
   shared_by?: string | null;
+  /** Whose Claude account runs a shared agent: the user's own or the owner's subscription */
+  share_account?: 'user' | 'owner';
+  share_fallback?: boolean;
+  /** Recipients only, with share_account owner: is the owner's account full (no usage figures) */
+  owner_account_state?: { full: boolean; usableAt?: string };
 }
-export type AgentInput = Omit<AgentDef, 'id' | 'slug' | 'created_at' | 'knowledge' | 'trained_at' | 'trained_conversations' | 'visibility' | 'share_users' | 'share_groups' | 'owner_id' | 'shared_by'>;
+export type AgentInput = Omit<AgentDef, 'share_account' | 'share_fallback' | 'owner_account_state' | 'id' | 'slug' | 'created_at' | 'knowledge' | 'trained_at' | 'trained_conversations' | 'visibility' | 'share_users' | 'share_groups' | 'owner_id' | 'shared_by' | 'connector_ids'>;
 export interface UserGroup { id: string; name: string; members: string[] }
 export interface ShareTargets { users: { id: string; name: string }[]; groups: { id: string; name: string }[] }
 export const groupsApi = {
@@ -557,8 +580,10 @@ export const agentsApi = {
   trainStatus: (id: string) => request<AgentTraining>(`/agents/${id}/train`),
   setKnowledge: (id: string, knowledge: string) => request<AgentTraining>(`/agents/${id}/knowledge`, { method: 'PATCH', body: JSON.stringify({ knowledge }) }),
   shareTargets: () => request<ShareTargets>('/agents/share-targets'),
-  share: (id: string, visibility: 'private' | 'selected' | 'all', users: string[], groups: string[]) =>
-    request<{ agents: AgentDef[] }>(`/agents/${id}/share`, { method: 'PUT', body: JSON.stringify({ visibility, users, groups }) }),
+  share: (id: string, visibility: 'private' | 'selected' | 'all', users: string[], groups: string[], opts: { account_mode?: 'user' | 'owner'; fallback?: boolean } = {}) =>
+    request<{ agents: AgentDef[] }>(`/agents/${id}/share`, { method: 'PUT', body: JSON.stringify({ visibility, users, groups, ...opts }) }),
+  myConnectors: () => request<{ connectors: { id: string; name: string; type: string }[] }>('/agents/my-connectors'),
+  setConnectors: (id: string, connector_ids: string[]) => request<{ agents: AgentDef[] }>(`/agents/${id}/connectors`, { method: 'PUT', body: JSON.stringify({ connector_ids }) }),
   setMine: (id: string, is_active: boolean) => request<{ agents: AgentDef[] }>(`/agents/${id}/mine`, { method: 'PUT', body: JSON.stringify({ is_active }) }),
   revertKnowledge: (id: string) => request<AgentTraining>(`/agents/${id}/knowledge/revert`, { method: 'POST' }),
 };

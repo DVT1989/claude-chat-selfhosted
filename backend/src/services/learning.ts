@@ -14,6 +14,7 @@
 import { chownSync, existsSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
+import { chownRun } from './runUsers';
 import { scrub, renderAssistant } from './agentTraining';
 import { redis } from '../redis';
 import * as mem from './memory';
@@ -32,8 +33,6 @@ const PATTERN_THRESHOLD = 3;   // a task seen in this many conversations gets a 
 const TRANSCRIPT_MAX = 20_000; // characters sent to Haiku per run (was 30k: only the new part of a conversation goes in, plus 2 context messages)
 const UNUSED_DAYS = 120;       // cleanup: not used for this long (and rarely used) -> archived
 
-const CLAUDE_UID = 1001;
-const CLAUDE_GID = 1001;
 
 // ── Schema ──────────────────────────────────────────────────
 export async function ensureLearningSchema(): Promise<void> {
@@ -479,10 +478,10 @@ export async function approveProposal(userId: string, id: string): Promise<strin
   if (p.script_name && p.script_content) {
     const sdir = join(dir, 'scripts');
     mkdirSync(sdir, { recursive: true, mode: 0o755 });
-    chownSync(sdir, CLAUDE_UID, CLAUDE_GID);
+    chownRun(sdir);
     const f = join(sdir, p.script_name);
     writeFileSync(f, p.script_content, { mode: 0o755 });
-    chownSync(f, CLAUDE_UID, CLAUDE_GID);
+    chownRun(f);
   }
   // the admin chat has its own home: link the new skill there too (like the other own skills)
   try {

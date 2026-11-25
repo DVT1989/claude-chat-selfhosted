@@ -187,10 +187,14 @@ export function LimitLine({ icon, children }: { icon: keyof typeof LimitIcon; ch
 
 export type LimitEvent =
   | { type: 'rate_limited'; resetAt: string | null; message?: string; at?: string }
-  | { type: 'limit_note'; kind: 'switched'; at?: string };
+  | { type: 'limit_note'; kind: 'switched'; at?: string }
+  | { type: 'limit_note'; kind: 'owner_full'; owner?: string; at?: string };
 
 /** The history line for a stored limit event. */
 export function LimitEventLine({ ev }: { ev: LimitEvent }) {
+  if (ev.type === 'limit_note' && ev.kind === 'owner_full') {
+    return <LimitLine icon="swap">{`Account van ${ev.owner ?? 'de eigenaar'} is vol, deze werkplek draait op je eigen account`}</LimitLine>;
+  }
   if (ev.type === 'limit_note') {
     const t = limitTime(ev.at);
     return <LimitLine icon="swap">{t ? `Gewisseld om ${t}` : 'Gewisseld naar je andere account'}</LimitLine>;

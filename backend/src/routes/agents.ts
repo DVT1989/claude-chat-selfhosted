@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
-import { requireAuth, requireAdmin, auditLog } from '../middleware/auth';
+import { requireAuth, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
-import { listAgents, agentView, setAgentSharing, setSharedAgentActive, uniqueSlug, createAgent, assistPrompt, ASSIST_SYSTEM } from '../services/agents';
+import { listAgents, agentView, setAgentSharing, setAgentConnectors, setSharedAgentActive, uniqueSlug, createAgent, assistPrompt, ASSIST_SYSTEM } from '../services/agents';
 import { runStructured } from '../services/claudeCode';
 import { startTraining, trainingStatus, setKnowledge, revertKnowledge } from '../services/agentTraining';
 import { userForMemoryToken } from '../services/memory';
@@ -108,8 +108,8 @@ agentsRouter.get('/', async (req: Request, res: Response, next: NextFunction) =>
   try { res.json({ agents: agentView(req.user!.userId, await listAgents(req.user!.userId)) }); } catch (err) { next(err); }
 });
 
-// Admins: who may use one of their own agents; plus the users and groups to pick from
-agentsRouter.get('/share-targets', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+// Owners: who may use one of their own agents; plus the users and groups to pick from
+agentsRouter.get('/share-targets', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const users = await query<{ id: string; name: string }>('SELECT id, name FROM users WHERE is_active AND id <> $1 ORDER BY name', [req.user!.userId]);
     const groups = await query<{ id: string; name: string }>('SELECT id, name FROM user_groups ORDER BY name');
@@ -117,16 +117,35 @@ agentsRouter.get('/share-targets', requireAdmin, async (req: Request, res: Respo
   } catch (err) { next(err); }
 });
 
-agentsRouter.put('/:id/share', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+agentsRouter.put('/:id/share', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.userId, id = String(req.params.id);
     const b = z.object({
       visibility: z.enum(['private', 'selected', 'all']),
       users: z.array(z.string().uuid()).max(200).default([]),
       groups: z.array(z.string().uuid()).max(50).default([]),
+      account_mode: z.enum(['user', 'owner']).optional(),
+      fallback: z.boolean().optional(),
     }).parse(req.body);
     await setAgentSharing(userId, id, b);
-    await auditLog(userId, 'agent.share', 'agent', id, req.ip ?? '', { visibility: b.visibility, users: b.users.length, groups: b.groups.length });
+    await auditLog(userId, 'agent.share', 'agent', id, req.ip ?? '', { visibility: b.visibility, users: b.users.length, groups: b.groups.length, account_mode: b.account_mode, fallback: b.fallback });
+    res.json({ agents: agentView(userId, await listAgents(userId)) });
+  } catch (err) { next(err); }
+});
+
+// The connectors an agent may use; for a shared agent they work for everyone who uses it
+agentsRouter.get('/my-connectors', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const r = await query<{ id: string; name: string; type: string }>('SELECT id, name, type FROM connectors WHERE user_id = $1 AND is_active ORDER BY name', [req.user!.userId]);
+    res.json({ connectors: r.rows });
+  } catch (err) { next(err); }
+});
+agentsRouter.put('/:id/connectors', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId, id = String(req.params.id);
+    const b = z.object({ connector_ids: z.array(z.string().uuid()).max(50) }).parse(req.body);
+    await setAgentConnectors(userId, id, b.connector_ids);
+    await auditLog(userId, 'agent.connectors', 'agent', id, req.ip ?? '', { connectors: b.connector_ids });
     res.json({ agents: agentView(userId, await listAgents(userId)) });
   } catch (err) { next(err); }
 });

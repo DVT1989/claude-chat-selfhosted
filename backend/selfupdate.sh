@@ -3,7 +3,10 @@
 # The admin chat runs inside the backend container, so a plain `docker compose up -d --build backend`
 # from here would kill itself halfway (old container stopped, new one never created).
 # --no-deps: only the named services are recreated, never postgres/redis.
-P=${PROJECT_DIR:-/volume1/docker/claude-chat}
+# Project dir: PROJECT_DIR if set, else the working dir docker compose recorded on the backend container
+# (host path, same inside the container), else the legacy default.
+P=${PROJECT_DIR:-$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' claude-chat-backend-1 2>/dev/null)}
+P=${P:-/volume1/docker/claude-chat}
 LOG=$P/.selfupdate.log
 NAME=claude-chat-selfupdate
 

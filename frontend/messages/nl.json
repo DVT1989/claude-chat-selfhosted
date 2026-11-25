@@ -137,8 +137,11 @@
     }
   },
   "chat": {
-    "closeImage": "Sluit afbeelding",
-    "imageView": "Afbeelding",
+    "lightboxClose": "Afbeelding sluiten",
+    "lightboxDownload": "Afbeelding downloaden",
+    "lightboxOpen": "Origineel openen in nieuw tabblad",
+    "lightboxZoomIn": "Ware grootte",
+    "lightboxZoomOut": "Passend in beeld",
     "inputPlaceholder": "Bericht…",
     "send": "Versturen",
     "stop": "Stoppen",
@@ -210,6 +213,7 @@
     "adminShort": "Admin",
     "users": "Gebruikers",
     "backups": "Backups",
+    "changelog": "Wijzigingen",
     "groups": "Groepen",
     "adminTools": "Admin tools"
   },
@@ -232,6 +236,7 @@
     "yesterday": "Gisteren",
     "chats": "Chats",
     "projects": "Projecten",
+    "projectsUnread": "Ongelezen berichten in projecten",
     "newChat": "Nieuwe chat",
     "newProject": "Nieuw project",
     "newChatInProject": "Nieuwe chat in dit project",
@@ -276,7 +281,6 @@
       "slate": "Leisteen"
     },
     "share": "Delen",
-    "projectsUnread": "Ongelezen berichten in projecten",
     "unreadCount": "{n} ongelezen"
   },
   "share": {

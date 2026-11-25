@@ -4,10 +4,11 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { getUserHomeDir } from '../services/claudeCode';
 import { requireAdmin } from '../middleware/auth';
-import { listSharedSkills, sharedNamesOf, setSkillShared } from '../services/userSkills';
+import { listSharedSkills, sharedNamesOf, setSkillShared, setSkillShare } from '../services/userSkills';
 import { query } from '../db';
 import { listOwnSkills, prepareSkill, saveOwnSkill, deleteOwnSkill, MAX_SKILL_BYTES } from '../services/userSkills';
-import { importFromGithub } from '../services/githubSkills';
+import express from 'express';
+import { importFromGithub, importFromZip } from '../services/githubSkills';
 
 export const skillsRouter = Router();
 
@@ -32,7 +33,7 @@ skillsRouter.get('/', requireAuth, async (req: Request, res: Response) => {
   const shared = await sharedNamesOf(uid);
   res.json({
     ...manifest,
-    own: listOwnSkills(getUserHomeDir(uid)).map((s) => ({ ...s, shared: shared.has(s.name) })),
+    own: listOwnSkills(getUserHomeDir(uid)).map((s) => ({ ...s, shared: shared.has(s.name), share: shared.get(s.name) ?? { visibility: 'private', users: [], groups: [] } })),
     // skills admins share with everyone (read-only for this user)
     sharedByOthers: (await listSharedSkills(uid)).map(({ dir: _dir, ...s }) => s),
   });
@@ -69,6 +70,17 @@ skillsRouter.post('/github', requireAuth, async (req: Request, res: Response) =>
   }
 });
 
+// Upload a .skill or .zip export (Claude Desktop): raw bytes in the body, original file name in ?filename=
+skillsRouter.post('/upload', requireAuth, express.raw({ type: () => true, limit: '31mb' }), (req: Request, res: Response) => {
+  try {
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || !body.length) { res.status(400).json({ error: 'Geen bestand ontvangen.' }); return; }
+    res.json(importFromZip(getUserHomeDir(req.user!.userId), body, String(req.query.filename ?? 'skill')));
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
 skillsRouter.delete('/:name', requireAuth, async (req: Request, res: Response) => {
   const ok = deleteOwnSkill(getUserHomeDir(req.user!.userId), String(req.params.name));
   if (!ok) { res.status(404).json({ error: 'Skill niet gevonden' }); return; }
@@ -78,11 +90,18 @@ skillsRouter.delete('/:name', requireAuth, async (req: Request, res: Response) =
 
 // Admins: share one of their own skills with everyone, or stop sharing
 skillsRouter.put('/:name/share', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const parsed = z.object({ shared: z.boolean() }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: 'Ongeldige invoer' }); return; }
+  const parsed = z.object({
+    shared: z.boolean().optional(),
+    visibility: z.enum(['private', 'selected', 'all']).optional(),
+    users: z.array(z.string().uuid()).max(500).optional(),
+    groups: z.array(z.string().uuid()).max(100).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success || (parsed.data.shared === undefined && !parsed.data.visibility)) { res.status(400).json({ error: 'Ongeldige invoer' }); return; }
   try {
-    await setSkillShared(req.user!.userId, String(req.params.name), parsed.data.shared);
-    res.json({ ok: true, shared: parsed.data.shared });
+    const d = parsed.data;
+    const share = { visibility: d.visibility ?? (d.shared ? 'all' : 'private'), users: d.users ?? [], groups: d.groups ?? [] } as const;
+    await setSkillShare(req.user!.userId, String(req.params.name), share);
+    res.json({ ok: true, shared: share.visibility !== 'private', share });
   } catch (err) {
     const e = err as { status?: number; statusCode?: number; message: string };
     res.status(e.statusCode ?? e.status ?? 400).json({ error: e.message });

@@ -137,8 +137,11 @@
     }
   },
   "chat": {
-    "closeImage": "Close image",
-    "imageView": "Image",
+    "lightboxClose": "Close image",
+    "lightboxDownload": "Download image",
+    "lightboxOpen": "Open original in new tab",
+    "lightboxZoomIn": "Zoom to actual size",
+    "lightboxZoomOut": "Fit to screen",
     "inputPlaceholder": "Message…",
     "send": "Send",
     "stop": "Stop",
@@ -210,6 +213,7 @@
     "adminShort": "Admin",
     "users": "Users",
     "backups": "Backups",
+    "changelog": "Changelog",
     "groups": "Groups",
     "adminTools": "Admin tools"
   },
@@ -232,6 +236,7 @@
     "yesterday": "Yesterday",
     "chats": "Chats",
     "projects": "Projects",
+    "projectsUnread": "Unread messages in projects",
     "newChat": "New chat",
     "newProject": "New project",
     "newChatInProject": "New chat in this project",
@@ -276,7 +281,6 @@
       "slate": "Slate"
     },
     "share": "Share",
-    "projectsUnread": "Unread messages in projects",
     "unreadCount": "{n} unread"
   },
   "share": {

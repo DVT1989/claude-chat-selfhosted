@@ -3,7 +3,7 @@ import { dirname } from 'path';
 import { config } from '../config';
 
 /**
- * The project dir (source, .env, backups) is mounted at its host path. Normal chats run as uid 1001
+ * The project dir (source, .env, backups) is mounted at its host path. Normal chats run as their own uid (20000+)
  * and must not read it; only the admin chat (gid 0) may. On the NAS the Dockerfile closes /volume1.
  * On other hosts (e.g. /opt/claude-chat or /home/x/claude-chat) the parent dirs are created by docker
  * as 755: close the first parent that exists only for this mount (root:root 750), otherwise warn.

@@ -134,10 +134,13 @@ function writeFileSafe(owner: string, d: { root: string; path: string; b64: stri
   }
   const dirs: string[] = [];
   for (let p = dirname(abs); !existsSync(p) && p.length > 1; p = dirname(p)) dirs.push(p);
-  mkdirSync(dirname(abs), { recursive: true });
-  for (const p of dirs) try { chownSync(p, UID, GID); } catch { /* ignore */ }
-  writeFileSync(abs, buf, { mode: 0o644 });
-  try { chownSync(abs, UID, GID); } catch { /* ignore */ }
+  // owner and group follow the base directory (per-user uid since the isolation, group root, 2770)
+  let uid = UID, gid = GID;
+  try { const st = statSync(baseDir); uid = st.uid; gid = st.gid; } catch { /* keep defaults */ }
+  mkdirSync(dirname(abs), { recursive: true, mode: 0o2770 });
+  for (const p of dirs) try { chownSync(p, uid, gid); } catch { /* ignore */ }
+  writeFileSync(abs, buf, { mode: 0o660 });
+  try { chownSync(abs, uid, gid); } catch { /* ignore */ }
   const t = new Date(ts);
   if (!Number.isNaN(t.getTime())) try { utimesSync(abs, t, t); } catch { /* ignore */ }
 }

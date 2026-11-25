@@ -14,7 +14,7 @@ import { api as devApi, ago, type Device } from '@/components/devices/shared';
 const CONNECTOR_TYPES = [
   { value: 'git',    label: 'Git',       fields: [{ key: 'url',  label: 'Repository URL', type: 'text' }],                                                                credFields: [{ key: 'token', label: 'Access Token', type: 'password' }, { key: 'username', label: 'Gebruikersnaam', type: 'text' }] },
   { value: 'github', label: 'GitHub',    fields: [],                                                                                                                       credFields: [{ key: 'token', label: 'Token (github.com/settings/tokens)', type: 'password' }] },
-  { value: 'ssh',    label: 'SSH',       fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'port', label: 'Poort', type: 'number' }],                         credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }, { key: 'sudo_password', label: 'Sudo wachtwoord (optioneel)', type: 'password', optional: true }] },
+  { value: 'ssh',    label: 'SSH',       fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'port', label: 'Poort', type: 'number' }],                         credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord (of private key hieronder)', type: 'password', optional: true }, { key: 'private_key', label: 'Private key (optioneel, plak de hele sleutel)', type: 'textarea', optional: true }, { key: 'sudo_password', label: 'Sudo wachtwoord (optioneel)', type: 'password', optional: true }] },
   { value: 'sftp',   label: 'SFTP',      fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'port', label: 'Poort (standaard 22)', type: 'number' }, { key: 'dir', label: 'Startmap (optioneel)', type: 'text' }], credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord (of private key hieronder)', type: 'password', optional: true }, { key: 'private_key', label: 'Private key (optioneel, plak de hele sleutel)', type: 'textarea', optional: true }] },
   { value: 'ftp',    label: 'FTP',       fields: [{ key: 'host', label: 'Host', type: 'text' }],                                                                          credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }] },
   { value: 'smb',    label: 'SMB/Samba', fields: [{ key: 'host', label: 'Host', type: 'text' }, { key: 'share', label: 'Share naam', type: 'text' }],                     credFields: [{ key: 'username', label: 'Gebruikersnaam', type: 'text' }, { key: 'password', label: 'Wachtwoord', type: 'password' }] },
@@ -23,6 +23,8 @@ const CONNECTOR_TYPES = [
       { key: 'region', label: 'Regio / instance', type: 'select', options: [['eu', 'EU (eu.ninjarmm.com)'], ['app', 'Global (app.ninjarmm.com)'], ['ca', 'Canada (ca.ninjarmm.com)'], ['oc', 'Oceanië (oc.ninjarmm.com)'], ['us2', 'US2 (us2.ninjarmm.com)'], ['custom', 'Eigen URL']] },
       { key: 'url', label: 'Eigen URL, bijv. https://tenant.rmmservice.eu', type: 'text', onlyRegion: 'custom' }],
     credFields: [{ key: 'client_id', label: 'Client ID (NinjaOne › Beheer › Apps › API › Client app-ID)', type: 'text' }, { key: 'client_secret', label: 'Client Secret', type: 'password' }] },
+  { value: 'icloud', label: 'iCloud Mail', agents: true, fields: [{ key: 'user', label: 'Apple-ID, bijv. naam@icloud.com', type: 'text' }], credFields: [{ key: 'password', label: 'App-specifiek wachtwoord (appleid.apple.com)', type: 'password' }] },
+  { value: 'gripp', label: 'GRIPP', agents: true, fields: [], credFields: [{ key: 'token', label: 'API-token (GRIPP › Instellingen › API)', type: 'password' }] },
   { value: 'python', label: 'Python',    fields: [],                                                                                                                       credFields: [] },
   // eigen flow (inloggen of koppelcode), geen formulier
   { value: 'google-search-console', label: 'Google Search Console', fields: [], credFields: [] },
@@ -121,6 +123,7 @@ function ConnectorsPage() {
       const credentials: Record<string, unknown> = {};
       selectedType?.fields.forEach((f) => { if (configVals[f.key]) cfg[f.key] = configVals[f.key]; });
       if (type === 'ninjaone') { cfg.region = configVals.region || 'eu'; if (cfg.region !== 'custom') delete cfg.url; cfg.agent_ids = agentIds; }
+      if (type === 'gripp' || type === 'icloud') cfg.agent_ids = agentIds;
       selectedType?.credFields.forEach((f) => { if (credVals[f.key]) credentials[f.key] = credVals[f.key]; });
 
       if (editingId) {

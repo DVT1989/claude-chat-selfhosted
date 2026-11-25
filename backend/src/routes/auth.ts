@@ -219,6 +219,8 @@ authRouter.put('/me', requireAuth, async (req: Request, res: Response, next) => 
         spell_lang: z.enum(['nl', 'en', 'auto']).optional(),
         bg_motion: z.boolean().optional(),
         remote_notice: z.boolean().optional(),
+        prompt_suggestions: z.boolean().optional(),
+        render_hosts: z.string().max(4000).optional(),
       }).optional(),
     });
     const body = schema.parse(req.body);

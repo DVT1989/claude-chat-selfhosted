@@ -11,7 +11,7 @@ export interface User {
   theme_mode: 'light' | 'dark' | 'system';
   accent_color: string;
   /** spelling check in the composer (default on), its language, and the moving background (default on) */
-  preferences?: { spellcheck?: boolean; spell_lang?: 'nl' | 'en' | 'auto'; bg_motion?: boolean; remote_notice?: boolean } | null;
+  preferences?: { spellcheck?: boolean; spell_lang?: 'nl' | 'en' | 'auto'; bg_motion?: boolean; remote_notice?: boolean; prompt_suggestions?: boolean; render_hosts?: string } | null;
 }
 
 export interface ModelOption {

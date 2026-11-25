@@ -143,7 +143,6 @@ projectsRouter.post('/', async (req: Request, res: Response, next) => {
       'INSERT INTO projects (user_id, name, color, icon, instructions) VALUES ($1,$2,$3,$4,$5) RETURNING id',
       [req.user!.userId, b.name, b.color ?? 'terracotta', b.icon ?? 'folder', b.instructions ?? ''],
     );
-    await query('INSERT INTO project_members (project_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [ins.rows[0].id, req.user!.userId]);
     const p = await view(ins.rows[0].id, req.user!.userId);
     const pr = p as unknown as { id: string; name: string; instructions: string };
     ensureProjectDir(req.user!.userId, { id: pr.id, name: pr.name, instructions: pr.instructions });

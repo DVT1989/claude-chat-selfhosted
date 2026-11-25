@@ -4,6 +4,7 @@ import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, cho
 import { join } from 'path';
 import { randomBytes, createHash } from 'crypto';
 import { config } from '../config';
+import { chownRun, ADMIN_UID, spawnIds, ensureRunUid, runUidOf } from './runUsers';
 import { pickAccount, markLimited, ensureAccountDir, listAccounts } from './claudeAccounts';
 import { redis } from '../redis';
 import { AppError } from '../middleware/errorHandler';
@@ -85,7 +86,7 @@ export function getProjectDir(userId: string, projectId: string): string {
   return join(getUserWorkspace(userId), 'projects', projectId);
 }
 
-/** shared: set when the project has members; files live in one dir that every member's run may write (all runs here share one OS user, so the gid is only the shared marker) */
+/** shared: set when the project has members; files live in one dir (group gid) that every member's run may write */
 export interface ProjectInfo { id: string; name: string; instructions: string; shared?: { gid: number; ownerId: string } | null }
 
 export function getSharedProjectDir(projectId: string): string {
@@ -97,7 +98,7 @@ export function fixSharedProjectPerms(projectId: string, gid: number): void {
   const dir = getSharedProjectDir(projectId);
   try {
     if (!existsSync(dir)) return;
-    execFileSync('chown', ['-R', '-h', `${CLAUDE_UID}:${CLAUDE_GID}`, dir]);
+    execFileSync('chgrp', ['-R', '-h', String(gid), dir]);
     execFileSync('chmod', ['-R', 'g+rwX', dir]);
     execFileSync('find', [dir, '-type', 'd', '-exec', 'chmod', 'g+s', '{}', '+']);
   } catch (e) { console.error('[project] shared perms failed:', (e as Error).message); }
@@ -120,7 +121,7 @@ function ensureSharedDir(userId: string, p: ProjectInfo): string {
       }
     } catch { /* no old dir */ }
   }
-  chownSync(dir, CLAUDE_UID, CLAUDE_GID);
+  chownSync(dir, runUidOf(sh.ownerId), sh.gid);
   chmodSync(dir, 0o2770);
   fixSharedProjectPerms(p.id, sh.gid);
   return dir;
@@ -138,13 +139,20 @@ export function ensureProjectDir(userId: string, p: ProjectInfo): string {
   const dir = join(root, p.id);
   for (const d of [root, dir]) {
     if (!existsSync(d)) { mkdirSync(d, { recursive: true, mode: 0o755 }); }
-    chownSync(d, CLAUDE_UID, CLAUDE_GID);
+    chownRun(d);
   }
-  const text = `# Project: ${p.name}\n\nAlle chats van dit project delen deze map (${dir}). Bestanden die je hier maakt, zien de andere chats van het project ook.\n\n` +
+  const sharedDir = p.shared ? ensureSharedDir(userId, p) : null;
+  const text = `# Project: ${p.name}\n\n` + (sharedDir
+    ? `Dit is een gedeeld project: meerdere mensen werken in dezelfde chats. Projectbestanden staan in ${sharedDir} (ook bereikbaar als ./shared); lees en schrijf ze daar, alle leden zien ze. Vragen komen van verschillende mensen: de naam staat bij elke vraag.\n\n`
+    : `Alle chats van dit project delen deze map (${dir}). Bestanden die je hier maakt, zien de andere chats van het project ook.\n\n`) +
     (p.instructions.trim() ? `## Instructies van het project\n\n${p.instructions.trim()}\n` : '');
   const mdPath = join(dir, 'CLAUDE.md');
   writeFileSync(mdPath, text, { mode: 0o644 });
-  chownSync(mdPath, CLAUDE_UID, CLAUDE_GID);
+  chownRun(mdPath);
+  if (sharedDir) {
+    const l = join(dir, 'shared');
+    try { lstatSync(l); } catch { symlinkSync(sharedDir, l); }
+  }
   try {
     const names = readdirSync(ws).filter(n => (n.startsWith('.') && !n.startsWith('.claude') && n !== '.' && n !== '..') || n === 'attachments' || n === 'geschiedenis');
     for (const n of names) {
@@ -168,9 +176,9 @@ function ensureSessionInCwd(home: string, cwd: string, sessionId: string): void 
       const src = join(base, d, `${sessionId}.jsonl`);
       if (existsSync(src)) {
         mkdirSync(target, { recursive: true });
-        chownSync(target, CLAUDE_UID, CLAUDE_GID);
+        chownRun(target);
         cpSync(src, join(target, `${sessionId}.jsonl`));
-        chownSync(join(target, `${sessionId}.jsonl`), CLAUDE_UID, CLAUDE_GID);
+        chownRun(join(target, `${sessionId}.jsonl`));
         return;
       }
     }
@@ -300,7 +308,10 @@ curl -s -H "$(MT)" -H "Content-Type: application/json" $FB/peers/NAAM/ask -d "{\
 \`\`\`
 Sleutels (eenmalig zichtbaar) en nieuwe installaties koppelen gaat in de app, niet via de chat.
 
-${werkplek ? '' : `## Backups
+${werkplek ? '' : `## Changelog
+Elke wijziging aan de app of de inrichting (nieuwe functie, aanpassing, bugfix, koppeling, instelling) noteer je na afloop in \`${config.projectDir}/CHANGELOG.md\`, onder de kop van de datum van vandaag (nieuwste bovenaan, kop aanmaken als die er nog niet is): - [wie] wat en waarom (onderdeel of bestanden) - live ja/nee. Bij wie noem je de persoon die de wijziging vroeg (Wouter of Sam, zoals bekend uit de gebruiker van dit gesprek), met bij uitvoering door een agent de agentnaam: "Sam via Builder". Gebruik nooit "hoofd-Claude" of "Claude" als label. Doe dat ook als een agent (bijv. Builder) of een andere beheerder de wijziging maakt. Zoek je wat er eerder is veranderd, lees dan eerst dit bestand. Het staat ook in de app onder Instellingen > Beheer > Wijzigingen. Geen wachtwoorden of geheimen erin.
+
+## Backups
 Dagelijks om 03:00 in \`${config.projectDir}/backups/\` (dump.sql, config.tar.gz, manifest.json). Terugzetten en de stappen per datum: skill claude-chat-backups.
 `}`;
 
@@ -311,7 +322,7 @@ export function ensureAdminProjectWorkspace(userId: string, language = 'nl', wer
   const databaseUrl = config.databaseUrl ?? process.env.DATABASE_URL ?? 'postgresql://...';
   const claudeMdPath = join(workspace, 'CLAUDE.md');
   writeFileSync(claudeMdPath, ADMIN_PROJECT_CLAUDE_MD(databaseUrl, workspace, language, werkplek), { mode: 0o640 });
-  chownSync(claudeMdPath, CLAUDE_UID, 0);
+  chownRun(claudeMdPath);
   chmodSync(claudeMdPath, 0o640);
 
   return workspace;
@@ -338,7 +349,7 @@ export function ensurePrivilegedHome(userId: string): string {
   const claudeDir = join(home, '.claude');
   if (!existsSync(claudeDir)) {
     mkdirSync(claudeDir, { mode: 0o2770 });
-    chownSync(claudeDir, CLAUDE_UID, 0);
+    chownRun(claudeDir);
   }
   if (fresh) {
     // One-time move-over: earlier admin chats kept their transcripts in the user's normal home.
@@ -348,22 +359,19 @@ export function ensurePrivilegedHome(userId: string): string {
     if (existsSync(src)) {
       const dst = join(claudeDir, 'projects', key);
       cpSync(src, dst, { recursive: true });
-      execFileSync('chown', ['-R', `${CLAUDE_UID}:0`, join(claudeDir, 'projects')]);
+      execFileSync('chown', ['-R', `${ADMIN_UID}:0`, join(claudeDir, 'projects')]);
     }
   }
   // Claude Code deletes transcripts older than cleanupPeriodDays (default 30): keep them.
   const settingsPath = join(claudeDir, 'settings.json');
   if (!existsSync(settingsPath)) {
     writeFileSync(settingsPath, JSON.stringify({ cleanupPeriodDays: 36500 }, null, 2), { mode: 0o640 });
-    chownSync(settingsPath, CLAUDE_UID, 0);
+    chownRun(settingsPath);
   }
   applySharedHooks(home, true);
   return home;
 }
 
-// clauderunner uid/gid — must match Dockerfile useradd
-const CLAUDE_UID = 1001;
-const CLAUDE_GID = 1001;
 
 // Skills shared from the NAS (synced from the owner's PC with sync_skills.py), mounted read-only.
 const SHARED_SKILLS_DIR = '/shared-skills/skills';
@@ -375,8 +383,8 @@ function linkSharedSkills(home: string): void {
     const target = join(home, '.claude', 'skills');
     if (!existsSync(target)) {
       mkdirSync(target, { recursive: true, mode: 0o755 });
-      chownSync(join(home, '.claude'), CLAUDE_UID, CLAUDE_GID);
-      chownSync(target, CLAUDE_UID, CLAUDE_GID);
+      chownRun(join(home, '.claude'));
+      chownRun(target);
     }
     const wanted = new Set(readdirSync(SHARED_SKILLS_DIR));
     for (const name of readdirSync(target)) {
@@ -439,14 +447,14 @@ function applySharedHooks(home: string, privileged = false): void {
     if (!existsSync(settingsPath) || readFileSync(settingsPath, 'utf8') !== next) {
       mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
       writeFileSync(settingsPath, next, { mode: privileged ? 0o640 : 0o600 });
-      chownSync(settingsPath, CLAUDE_UID, privileged ? 0 : CLAUDE_GID);
+      chownRun(settingsPath);
     }
     if (privileged) return;
     // caveman nudges once to set up a statusline; there is none in a chat, so mark that as done
     const nudge = join(claudeDir, '.caveman-nudge-shown');
     if (!existsSync(nudge)) {
       writeFileSync(nudge, '1', { mode: 0o600 });
-      chownSync(nudge, CLAUDE_UID, CLAUDE_GID);
+      chownRun(nudge);
     }
   } catch (err) {
     console.error('Could not apply shared hooks:', (err as Error).message);
@@ -458,11 +466,13 @@ export function ensureUserDirs(userId: string): void {
   const ws = getUserWorkspace(userId);
   if (!existsSync(home)) {
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    chownSync(home, CLAUDE_UID, CLAUDE_GID);
+    chownRun(home);
+    chmodSync(home, 0o2770); // owner run uid, group root (admin chat), nobody else
   }
   if (!existsSync(ws)) {
     mkdirSync(ws, { recursive: true, mode: 0o755 });
-    chownSync(ws, CLAUDE_UID, CLAUDE_GID);
+    chownRun(ws);
+    chmodSync(ws, 0o2770);
   }
   // Ensure .claude/settings.json exists (the unused claude-flow MCP entry is removed from old ones)
   const claudeDir = join(home, '.claude');
@@ -470,11 +480,11 @@ export function ensureUserDirs(userId: string): void {
   if (!existsSync(settingsPath)) {
     if (!existsSync(claudeDir)) {
       mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
-      chownSync(claudeDir, CLAUDE_UID, CLAUDE_GID);
+      chownRun(claudeDir);
     }
     const settings = { cleanupPeriodDays: 36500 };
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 });
-    chownSync(settingsPath, CLAUDE_UID, CLAUDE_GID);
+    chownRun(settingsPath);
   } else {
     try {
       const cur = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
@@ -500,6 +510,7 @@ function generatePKCE() {
 // ── Start OAuth login — generates PKCE, returns URL ─────────
 /** slot 0 = the user's main Claude login; 1+ = extra subscriptions (see claudeAccounts.ts) */
 export async function startAuthLogin(userId: string, slot = 0): Promise<{ url: string }> {
+  await ensureRunUid(userId);
   ensureUserDirs(userId);
 
   const { codeVerifier, codeChallenge, state } = generatePKCE();
@@ -524,6 +535,7 @@ export async function startAuthLogin(userId: string, slot = 0): Promise<{ url: s
 
 // ── Exchange authorization code for tokens ───────────────────
 export async function exchangeOAuthCode(userId: string, rawCode: string): Promise<void> {
+  await ensureRunUid(userId);
   // Platform shows "code#state". State is MANDATORY — without it we cannot bind the inbound code to the originating PKCE flow,
   // which is exactly the CSRF protection state is there to provide.
   const hashIdx = rawCode.indexOf('#');
@@ -608,7 +620,7 @@ export async function exchangeOAuthCode(userId: string, rawCode: string): Promis
   };
 
   writeFileSync(credPath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
-  chownSync(credPath, CLAUDE_UID, CLAUDE_GID);
+  chownRun(credPath);
 
   // Clean up PKCE state from Redis (the per-state key)
   await redis.del(`oauth:pkce:${userId}:${state}`);
@@ -641,7 +653,7 @@ function readCredentials(homeDir: string): StoredCredentials | null {
 function writeCredentials(homeDir: string, creds: StoredCredentials): void {
   const credPath = join(homeDir, '.claude.json');
   writeFileSync(credPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
-  chownSync(credPath, CLAUDE_UID, CLAUDE_GID);
+  chownRun(credPath);
 }
 
 /** Refresh the OAuth access token using the stored refresh token. Returns new access token or null. */
@@ -796,6 +808,8 @@ export type ClaudeEvent =
   | { type: 'agent_result'; toolUseId: string; content: string; isError: boolean; sessionId?: string; ccAgentId?: string }
   | { type: 'done'; sessionId: string; costUsd?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number }
   | { type: 'rate_limited'; resetAt: string | null; message: string }
+  /** Predicted next user prompt (CLI --prompt-suggestions), shown as ghost text in the composer */
+  | { type: 'prompt_suggestion'; suggestion: string; sessionId?: string }
   | { type: 'error'; message: string };
 
 // ── Rate limit helpers ───────────────────────────────────────
@@ -831,7 +845,7 @@ function extractIsoTimestamp(text: string): string | null {
 // ── Connector config type ────────────────────────────────────
 export interface ConnectorConfig {
   name: string;
-  type: 'ssh' | 'sftp' | 'ftp' | 'smb' | 'git' | 'github' | 'python' | 'sudo' | 'm365' | 'messenger' | 'devices' | 'lessons' | 'focustrack' | 'google-search-console' | 'ninjaone';
+  type: 'ssh' | 'sftp' | 'ftp' | 'smb' | 'git' | 'github' | 'python' | 'sudo' | 'm365' | 'messenger' | 'devices' | 'lessons' | 'focustrack' | 'google-search-console' | 'ninjaone' | 'gripp' | 'icloud';
   config: Record<string, unknown>;
   credentials: Record<string, unknown>;
 }
@@ -868,7 +882,7 @@ function lessonsSection(workspace: string, conn: ConnectorConfig): string[] {
   if (token) {
     const tokenFile = '.lessons.token';
     writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-    chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+    chownRun(join(workspace, tokenFile));
     out.push('Les opslaan (topic: app, devices, github, m365, messenger, ssh, git, security, ...):');
     out.push('```bash');
     out.push(`curl -s -H "x-lessons-token: $(cat ${tokenFile})" -H "Content-Type: application/json" http://127.0.0.1:4000/lessons/claude -d '{"topic":"devices","lesson":"Als SYSTEM staat winget niet in PATH; gebruik PowerShell (de backend voegt een winget-functie toe), niet cmd."}'`);
@@ -914,7 +928,7 @@ function projectMemorySection(workspace: string, conn: ConnectorConfig, trimmed 
   const m = conn.config.projectMemory as { core: Array<{ id: string; topic: string; content: string }>; topics: Array<{ topic: string; count: number }>; total: number } | undefined;
   const tokenFile = '.memory.token';
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   try { unlinkSync(join(workspace, '.lessons.token')); } catch { /* none */ }
   const out: string[] = ['## Projectgeheugen (database)'];
   out.push('Dit is het geheugen van dit gedeelde project, door alle leden te bewerken. Alleen dit geheugen is voor jou beschikbaar: het persoonlijke geheugen van de vrager of de eigenaar en het geheugen van andere projecten krijg je niet en lees je niet uit bestanden in een home (~/.claude/projects/*/memory). Zet er niets van elders in.');
@@ -935,6 +949,12 @@ function projectMemorySection(workspace: string, conn: ConnectorConfig, trimmed 
   out.push(`curl -s -X DELETE -H "$(MT)" http://127.0.0.1:4000/projects/claude/memory/ID   # verwijderen`);
   out.push('```');
   out.push('');
+  out.push('## Ontwerp of pagina als screenshot tonen');
+  out.push('Wil de gebruiker iets visueels zien: bouw het als HTML in de werkruimte en render het op de server naar PNG (zelfde token). Bron: file (absoluut pad naar .html), html of url. Opties: widths, theme light|dark, fullPage, selector, waitMs, name, out.');
+  out.push('```bash');
+  out.push(`curl -s -H "$(MT)" -H "Content-Type: application/json" http://127.0.0.1:4000/render/claude -d "{\\"file\\":\\"$PWD/ontwerp/index.html\\",\\"conversationId\\":\\"$CC_CONVERSATION_ID\\",\\"name\\":\\"homepage\\"}"   # -> {shots:[{width,markdown,path}]}`);
+  out.push('```');
+  out.push('');
   return out;
 }
 
@@ -945,7 +965,7 @@ function memorySection(workspace: string, conn: ConnectorConfig, trimmed = false
   const m = conn.config.memory as { core: Array<{ id: string; topic: string; content: string }>; topics: Array<{ topic: string; count: number }>; total: number } | undefined;
   const tokenFile = '.memory.token';
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   const out: string[] = ['## Eigen geheugen (database)'];
   out.push('Dit is je geheugen voor deze gebruiker. Het is gedeeld door al zijn sessies en Claude-accounts (web, admin-chat, Telegram/WhatsApp, agents) en vervangt de memory-bestanden: gebruik voor persoonlijke feiten deze database, niet ~/.claude/projects/*/memory.');
   out.push('- Zoek eerst (kort, met kernwoorden) voordat je iets uitzoekt of vraagt over personen, klanten, tenants, apparaten, voorkeuren, afspraken of eerdere projecten. Niet zoeken voor algemene kennis.');
@@ -975,6 +995,18 @@ function memorySection(workspace: string, conn: ConnectorConfig, trimmed = false
   out.push('```bash');
   out.push(`curl -s -H "$(MT)" -G --data-urlencode "q=selfupdate backend" http://127.0.0.1:4000/history/claude/search   # optioneel &limit=8&role=assistant&since=2026-11-01`);
   out.push(`curl -s -H "$(MT)" "http://127.0.0.1:4000/history/claude/conversation/CONVERSATION_ID?around=MESSAGE_ID&n=6"   # berichten rond een treffer`);
+  out.push('```');
+  out.push('');
+  out.push('## Ontwerp of pagina als screenshot tonen');
+  out.push('Wil de gebruiker iets visueels zien (siteontwerp, mockup, HTML-pagina, website): bouw het als HTML in de werkruimte en render het op de server naar PNG. De afbeeldingen komen als bijlage in dit gesprek; zet de teruggegeven markdown-regels letterlijk in je antwoord, dan staan ze inline in de chat. Bekijk een PNG eerst zelf (Read met out) als je het ontwerp wilt controleren.');
+  out.push('Bron: precies een van file (absoluut pad naar .html; relatieve css, js en afbeeldingen uit die map werken), html (inline, optioneel base = map voor assets) of url (http/https, openbare sites). Opties: widths (standaard [390,1280]), theme light|dark, fullPage (standaard true), selector (alleen dat element), waitMs (max 10000), name, out (map in de werkruimte voor een kopie).');
+  out.push('```bash');
+  out.push(`curl -s -H "$(MT)" -H "Content-Type: application/json" http://127.0.0.1:4000/render/claude -d "{\\"file\\":\\"$PWD/ontwerp/index.html\\",\\"conversationId\\":\\"$CC_CONVERSATION_ID\\",\\"name\\":\\"homepage\\",\\"out\\":\\"$PWD/ontwerp\\"}"   # -> {shots:[{width,markdown,path}]}`);
+  out.push('```');
+  out.push('Hostlijst (een site op deze Docker-host of in het LAN testen onder de echte domeinnaam): per gebruiker, zoals /etc/hosts: DOEL NAAM [NAAM...]. DOEL = IP, hostnaam of docker-host (de Docker-host zelf), optioneel :poort en http:// of https://; NAAM = domein of *.domein. De gebruiker beheert hem in Instellingen > Profiel, of jij op verzoek:');
+  out.push('```bash');
+  out.push('curl -s -H "$(MT)" http://127.0.0.1:4000/render/claude/hosts   # lezen');
+  out.push(`curl -s -X PUT -H "$(MT)" -H "Content-Type: application/json" http://127.0.0.1:4000/render/claude/hosts -d '{"hosts":"http://docker-host:8080 mijnsite.nl www.mijnsite.nl"}'   # hele lijst vervangen`);
   out.push('```');
   out.push('');
   if (!compact) {
@@ -1026,7 +1058,7 @@ function focustrackSection(workspace: string, conn: ConnectorConfig): string[] {
   const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
   const tokenFile = `.focustrack-${alias}.key`;
   writeFileSync(join(workspace, tokenFile), key, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   return [
     `## FocusTrack — ${conn.name} (${base})`,
     'Tijdregistratie van de gebruiker (AIO Dashboard, gesynchroniseerd over al zijn werkplekken). Functies aanroepen met POST /api/tt/<naam> en body {"args":{...}}; antwoord {"value":...}. Datums als YYYY-MM-DD.',
@@ -1045,6 +1077,55 @@ function focustrackSection(workspace: string, conn: ConnectorConfig): string[] {
   ];
 }
 
+/** GRIPP (api3): Claude uses a loopback proxy with a per-run token; the API token stays in the backend. */
+function grippSection(workspace: string, conn: ConnectorConfig): string[] {
+  const token = String(conn.credentials.token ?? '');
+  if (!token) return [];
+  const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tokenFile = `.gripp-${alias}.token`;
+  writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
+  chownRun(join(workspace, tokenFile));
+  return [
+    `## GRIPP — ${conn.name}`,
+    'GRIPP API3 via een lokale proxy: POST http://127.0.0.1:4000/gripp/claude/call met header x-gripp-token. Body = api3-aanroep: een array van {"method","params","id"}; params = [filters, opties]. Het API-token krijg je niet te zien.',
+    '```bash',
+    `GP() { curl -s -H "x-gripp-token: $(cat ~/${tokenFile} 2>/dev/null || cat ${tokenFile})" -H "Content-Type: application/json" http://127.0.0.1:4000/gripp/claude/call -d "$1"; }`,
+    `GP '[{"method":"employee.get","params":[[],{"paging":{"firstresult":0,"maxresults":10}}],"id":1}]'   # medewerkers`,
+    `GP '[{"method":"project.get","params":[[{"field":"project.archived","operator":"equals","value":false}],{"paging":{"firstresult":0,"maxresults":50}}],"id":1}]'   # filter voorbeeld`,
+    '```',
+    'Methoden hebben de vorm <entiteit>.<actie>: get, getone, create, update, delete (bijv. company, contact, project, task, timeentry, offer, invoice, employee). Antwoord: [{"result":{"rows":[...],"count":N,...},"error":null,"id":1}]. Filters: {"field":"entiteit.veld","operator":"equals|contains|greaterequals|...","value":...}. Meerdere aanroepen mogen in een array.',
+    'Regels: lezen mag vrij. Schrijven (create, update, delete, bijv. uren boeken) alleen als de opdracht of taak dat toestaat; toon bij verwijderen eerst wat er verdwijnt. Meld daarna kort wat er veranderd is.',
+    '',
+  ];
+}
+
+/** iCloud mail (IMAP): loopback proxy with a per-run token; the app password stays in the backend. */
+function icloudSection(workspace: string, conn: ConnectorConfig): string[] {
+  const token = String(conn.credentials.token ?? '');
+  if (!token) return [];
+  const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tokenFile = `.icloud-${alias}.token`;
+  writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
+  chownRun(join(workspace, tokenFile));
+  return [
+    `## iCloud Mail — ${conn.name}`,
+    'iCloud mailbox via een lokale proxy (IMAP): http://127.0.0.1:4000/icloud/claude/... met header x-icloud-token. Het wachtwoord krijg je niet te zien. Lezen verandert de gelezen-status niet.',
+    'Rechten: lezen, zoeken, verplaatsen, vlaggen (\\Flagged) en concept maken in map "Drafts". Niet versturen, niet verwijderen, geen agenda of contacten. Verplaatsen alleen naar een bestaande map; mapnamen exact zoals /folders ze geeft.',
+    '```bash',
+    `IC() { curl -s -H "x-icloud-token: $(cat ~/${tokenFile} 2>/dev/null || cat ${tokenFile})" -H "Content-Type: application/json" "http://127.0.0.1:4000/icloud/claude/$1" ${'${2:+-d "$2"}'}; }`,
+    'IC folders                                                       # mappen',
+    `IC messages '{"folder":"INBOX","limit":20,"unseen":true}'         # nieuwste eerst; filters: from, subject, text, unseen, flagged, since`,
+    `IC search '{"folder":"INBOX","text":"factuur"}'                   # UID SEARCH TEXT`,
+    `IC read '{"folder":"INBOX","uid":123}'                            # tekst (text/plain, anders HTML zonder tags) en bijlagenamen`,
+    `IC move '{"folder":"INBOX","uid":123,"to":"Archive"}'            # UID MOVE`,
+    `IC flag '{"folder":"INBOX","uid":123,"flagged":true}'            # vlag zetten of weghalen`,
+    `IC draft '{"to":"naam@voorbeeld.nl","subject":"Onderwerp","text":"Tekst"}'   # concept in Drafts, wordt niet verstuurd`,
+    '```',
+    'UIDs zijn per map. Toon de gebruiker bij verplaatsen en vlaggen kort wat je veranderde. Het concept moet de gebruiker zelf in Mail controleren en versturen.',
+    '',
+  ];
+}
+
 /** NinjaOne (RMM/PSA): Claude uses a loopback proxy with a per-run token; the client secret stays in the backend. */
 function ninjaoneSection(workspace: string, conn: ConnectorConfig): string[] {
   const token = String(conn.credentials.token ?? '');
@@ -1052,7 +1133,7 @@ function ninjaoneSection(workspace: string, conn: ConnectorConfig): string[] {
   const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
   const tokenFile = `.ninjaone-${alias}.token`;
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   const base = String(conn.config.base ?? '');
   return [
     `## NinjaOne — ${conn.name}${base ? ` (${base})` : ''}`,
@@ -1091,7 +1172,7 @@ function gscSection(workspace: string, conn: ConnectorConfig): string[] {
   if (!token) return [head, `Niet beschikbaar: ${String(conn.credentials.error ?? 'niet ingelogd')}. Vraag de gebruiker opnieuw in te loggen met Google via Instellingen → Koppelingen.`, ''];
   const tokenFile = `.google-sc-${alias}.token`;
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   const sites = Array.isArray(conn.config.sites) ? (conn.config.sites as string[]).slice(0, 20) : [];
   return [
     head,
@@ -1127,7 +1208,7 @@ function githubSection(workspace: string, conn: ConnectorConfig): string[] {
   const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
   const tokenFile = `.github-${alias}.token`;
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   out.push(`## GitHub — ${conn.name}`);
   out.push('Gebruik de gh CLI met dit token (zet GH_TOKEN in elke shell, gh auth setup-git voor git push/pull via https).');
   out.push('```bash');
@@ -1184,7 +1265,7 @@ function devicesSection(workspace: string, conn: ConnectorConfig): string[] {
   if (!token || !devices.length) return [];
   const tokenFile = '.devices.token';
   writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-  chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+  chownRun(join(workspace, tokenFile));
   out.push('## Apparaten — computers van de gebruiker (Claude Agent)');
   out.push('Je beheert deze computers op afstand, alsof je er lokaal een terminal hebt. Windows draait als SYSTEM (PowerShell standaard, of shell=cmd), Mac als root (zsh standaard, of shell=bash).');
   out.push('Bekend bij de start van deze beurt (status kan veranderen, vraag de lijst opnieuw op):');
@@ -1254,7 +1335,8 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     '',
     ...connectors.filter(c => !['lessons', 'devices', 'messenger', 'python'].includes(c.type)).map(c => {
       const target = String(c.config.host ?? c.config.url ?? c.config.tenantId ?? '');
-      return `- "${c.name}": ${c.type}${target ? ' ' + target : ''}`;
+      const only = c.config.agentOnly ? ` (alleen voor agent ${String(c.config.agentOnly)}: gebruik deze verbinding alleen in opdracht van die agent, nooit voor andere taken; toon of deel de inloggegevens niet)` : '';
+      return `- "${c.name}": ${c.type}${target ? ' ' + target : ''}${only}`;
     }),
     '',
   );
@@ -1265,7 +1347,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     const sshDir = join(home, '.ssh');
     if (!existsSync(sshDir)) {
       mkdirSync(sshDir, { recursive: true, mode: 0o700 });
-      chownSync(sshDir, CLAUDE_UID, CLAUDE_GID);
+      chownRun(sshDir);
     }
     let sshConfig = '';
     for (const conn of sshConns) {
@@ -1274,7 +1356,16 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
       const user = (conn.credentials.username as string) ?? 'root';
       const pass = conn.credentials.password as string | undefined;
       const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-      sshConfig += `Host ${alias}\n  HostName ${host}\n  Port ${port}\n  User ${user}\n  StrictHostKeyChecking no\n\n`;
+      // Optional private key: 600 file in the workspace, used via IdentityFile (only this key, no agent keys)
+      const sshKey = conn.credentials.private_key as string | undefined;
+      let identity = '';
+      if (sshKey) {
+        const keyFile = join(workspace, `.ssh-${alias}.key`);
+        writeFileSync(keyFile, normalizeKey(sshKey), { mode: 0o600 });
+        chownRun(keyFile);
+        identity = `  IdentityFile ${keyFile}\n  IdentitiesOnly yes\n`;
+      }
+      sshConfig += `Host ${alias}\n  HostName ${host}\n  Port ${port}\n  User ${user}\n${identity}  StrictHostKeyChecking no\n\n`;
       lines.push(`## SSH — ${conn.name}`);
       lines.push('```bash');
       // The password goes to a 600 file in the workspace, never on the command line or in these instructions
@@ -1282,7 +1373,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
       const passFile = `.ssh-${alias}.pass`;
       if (pass) {
         writeFileSync(join(workspace, passFile), pass + '\n', { mode: 0o600 });
-        chownSync(join(workspace, passFile), CLAUDE_UID, CLAUDE_GID);
+        chownRun(join(workspace, passFile));
         lines.push(`# Verbinding (wachtwoord staat in ${passFile}; zet het nooit zelf in een commando):`);
         lines.push(`sshpass -f ${passFile} ssh ${alias}`);
         lines.push(`# Commando uitvoeren:`);
@@ -1296,7 +1387,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
         // The sudo password goes to the REMOTE sudo via ssh's stdin (a local `sudo` would be pointless).
         const sudoFile = `.sudo-${alias}`;
         writeFileSync(join(workspace, sudoFile), sudoPass + '\n', { mode: 0o600 });
-        chownSync(join(workspace, sudoFile), CLAUDE_UID, CLAUDE_GID);
+        chownRun(join(workspace, sudoFile));
         const ssh = pass ? `sshpass -f ${passFile} ssh ${alias}` : `ssh ${alias}`;
         lines.push(`# Beheerderscommando OP ${conn.name} (sudo-wachtwoord gaat via stdin naar de server):`);
         lines.push(`${ssh} "sudo -S -p '' <commando>" < ${sudoFile}`);
@@ -1309,7 +1400,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     }
     const sshConfigPath = join(sshDir, 'config');
     writeFileSync(sshConfigPath, sshConfig, { mode: 0o600 });
-    chownSync(sshConfigPath, CLAUDE_UID, CLAUDE_GID);
+    chownRun(sshConfigPath);
   }
 
   // SFTP — key/password go to files with mode 600 in the workspace, never on the command line
@@ -1325,11 +1416,11 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     if (key) {
       keyFile = join(workspace, `.sftp-${alias}.key`);
       writeFileSync(keyFile, normalizeKey(key), { mode: 0o600 });
-      chownSync(keyFile, CLAUDE_UID, CLAUDE_GID);
+      chownRun(keyFile);
     }
     const script = join(workspace, `.sftp-${alias}.lftp`);
     writeFileSync(script, buildLftpScript({ host, port, username: user, password: pass, keyFile, dir: conn.config.dir as string | undefined }), { mode: 0o600 });
-    chownSync(script, CLAUDE_UID, CLAUDE_GID);
+    chownRun(script);
     lines.push(`## SFTP — ${conn.name} (${host}:${port})`);
     lines.push('```bash');
     lines.push(`# Commando\'s uitvoeren (inloggegevens staan in het script, nooit op de commandoregel zetten):`);
@@ -1395,8 +1486,10 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
   for (const conn of connectors.filter(c => c.type === 'focustrack')) lines.push(...focustrackSection(workspace, conn));
   for (const conn of connectors.filter(c => c.type === 'google-search-console')) lines.push(...gscSection(workspace, conn));
   for (const conn of connectors.filter(c => c.type === 'ninjaone')) lines.push(...ninjaoneSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'gripp')) lines.push(...grippSection(workspace, conn));
+  for (const conn of connectors.filter(c => c.type === 'icloud')) lines.push(...icloudSection(workspace, conn));
 
-  // Microsoft 365 — a fresh Graph token per run (fetched in routes/stream.ts), read-only scopes
+  // Microsoft 365 — a fresh Graph token per run (fetched in routes/stream.ts); m365Mode 'read' = token with only read rights
   for (const conn of connectors.filter(c => c.type === 'm365')) {
     const alias = conn.name.replace(/[^a-zA-Z0-9_-]/g, '_');
     const tenant = String(conn.config.tenantName ?? conn.name);
@@ -1409,7 +1502,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     }
     const tokenFile = `.m365-${alias}.token`;
     writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-    chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+    chownRun(join(workspace, tokenFile));
     lines.push('Microsoft Graph als het gekoppelde account. Het token is ongeveer een uur geldig. Krijg je 403 op mail of bestanden, dan moet de gebruiker de tenant opnieuw koppelen om die rechten toe te staan.');
     lines.push('```bash');
     lines.push(`G() { curl -s -H "Authorization: Bearer $(cat ${tokenFile})" -H "ConsistencyLevel: eventual" "https://graph.microsoft.com/$1"; }`);
@@ -1420,39 +1513,64 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     lines.push(`G 'v1.0/subscribedSkus?$select=skuPartNumber,consumedUnits,prepaidUnits'`);
     lines.push(`G 'v1.0/deviceManagement/managedDevices?$select=deviceName,operatingSystem,complianceState,lastSyncDateTime'`);
     lines.push(`G 'v1.0/auditLogs/signIns?$top=20'`);
-    lines.push('# Mail: eigen mailbox en gedeelde mailboxen (gebruik het adres van de gedeelde mailbox)');
+    const readOnly = conn.config.m365Mode === 'read';
+    lines.push(readOnly
+      ? 'Alleen-lezen: deze run heeft een token met alleen leesrechten (ingesteld per agent). Schrijven geeft 403; zeg dan dat de agent op Lezen staat (Instellingen > Microsoft 365).'
+      : 'Volledig beheer van wat dit account mag: eigen mailbox, gedeelde mailboxen, OneDrive, SharePoint, agenda en contacten.');
+    lines.push('# Mail: eigen mailbox (me) en gedeelde mailboxen (users/adres@domein.nl in plaats van me)');
     lines.push(`G 'v1.0/me/mailFolders/inbox/messages?$top=15&$select=subject,from,receivedDateTime,isRead,bodyPreview&$orderby=receivedDateTime desc'`);
     lines.push(`G 'v1.0/me/mailFolders/inbox?$select=unreadItemCount,totalItemCount'`);
+    lines.push(`G 'v1.0/me/mailFolders?$select=id,displayName,unreadItemCount&$top=100'`);
     lines.push(`# Mail van vandaag (Nederlandse tijd) in één aanroep:`);
     lines.push(`G "v1.0/me/mailFolders/inbox/messages?\\$filter=receivedDateTime ge $(TZ=Europe/Amsterdam date -d 'today 00:00' -u +%Y-%m-%dT%H:%M:%SZ)&\\$select=subject,from,receivedDateTime,isRead,bodyPreview&\\$orderby=receivedDateTime desc&\\$top=50"`);
     lines.push(`G 'v1.0/me/messages?$search="factuur"&$top=10&$select=subject,from,receivedDateTime'`);
-    lines.push(`G 'v1.0/users/info@domein.nl/mailFolders/inbox/messages?$top=15&$select=subject,from,receivedDateTime,isRead'`);
+    lines.push(`G 'v1.0/users/info@domein.nl/mailFolders/inbox/messages?$top=15&$select=subject,from,receivedDateTime,isRead'   # gedeelde mailbox`);
     lines.push(`G 'v1.0/me/messages/{id}?$select=subject,from,toRecipients,body'   # volledige mail`);
+    if (!readOnly) {
+      lines.push(`GW PATCH 'v1.0/me/messages/{id}' -d '{"isRead":true}'   # gelezen markeren (ook flag, categories)`);
+      lines.push(`GW POST 'v1.0/me/messages/{id}/move' -d '{"destinationId":"archive"}'   # verplaatsen (archive, deleteditems of een map-id)`);
+      lines.push(`GW POST 'v1.0/me/messages/{id}/createReply' -d '{"comment":"tekst"}'   # concept-antwoord (in Concepten), daarna .../send`);
+      lines.push(`GW POST 'v1.0/me/messages' -d '{"subject":"..","body":{"contentType":"Text","content":".."},"toRecipients":[{"emailAddress":{"address":"x@y.nl"}}]}'   # concept`);
+      lines.push(`GW POST 'v1.0/me/sendMail' -d '{"message":{"subject":"..","body":{"contentType":"Text","content":".."},"toRecipients":[{"emailAddress":{"address":"x@y.nl"}}]}}'   # versturen`);
+      lines.push(`GW POST 'v1.0/users/info@domein.nl/sendMail' -d '{...}'   # versturen als gedeelde mailbox (Send As nodig)`);
+      lines.push(`GW DELETE 'v1.0/me/messages/{id}'   # verwijderen`);
+    }
     lines.push('# OneDrive / SharePoint');
     lines.push(`G 'v1.0/me/drive/root/children?$select=name,size,lastModifiedDateTime,folder,file'`);
     lines.push(`G 'v1.0/me/drive/root:/Documenten:/children'`);
     lines.push(`G "v1.0/me/drive/root/search(q='offerte')?\$select=name,webUrl,lastModifiedDateTime"`);
-    lines.push('# OneDrive schrijven (alleen als de gebruiker dat vraagt of ermee instemt; 403 = tenant opnieuw koppelen voor schrijfrechten)');
-    lines.push(`curl -s -X PUT -H "Authorization: Bearer $(cat ${tokenFile})" -H "Content-Type: application/octet-stream" --data-binary @bestand.js "https://graph.microsoft.com/v1.0/me/drive/root:/Bureaublad/map/bestand.js:/content"   # max 4 MB, maakt of overschrijft`);
-    lines.push(`curl -sL -H "Authorization: Bearer $(cat ${tokenFile})" "https://graph.microsoft.com/v1.0/me/drive/root:/Bureaublad/map/bestand.js:/content" -o bestand.js   # downloaden`);
-    lines.push(`GW POST 'v1.0/me/drive/root:/Bureaublad/map:/children' -d '{"name":"nieuw","folder":{},"@microsoft.graph.conflictBehavior":"fail"}'   # map maken`);
+    lines.push(`G 'v1.0/sites?search=projecten&$select=id,displayName,webUrl'   # SharePoint-sites zoeken`);
+    lines.push(`G 'v1.0/sites/{siteId}/drives'   # documentbibliotheken; daarna drives/{driveId}/root/children`);
+    lines.push(`G 'v1.0/me/drive/sharedWithMe'`);
+    lines.push(`curl -sL -H "Authorization: Bearer $(cat ${tokenFile})" "https://graph.microsoft.com/v1.0/me/drive/items/{id}/content" -o bestand   # downloaden`);
+    if (!readOnly) {
+      lines.push(`curl -s -X PUT -H "Authorization: Bearer $(cat ${tokenFile})" -H "Content-Type: application/octet-stream" --data-binary @bestand.js "https://graph.microsoft.com/v1.0/me/drive/root:/Bureaublad/map/bestand.js:/content"   # uploaden, max 4 MB, maakt of overschrijft (SharePoint: drives/{driveId}/root:/pad:/content)`);
+      lines.push(`GW POST 'v1.0/me/drive/root:/Bureaublad/map:/children' -d '{"name":"nieuw","folder":{},"@microsoft.graph.conflictBehavior":"fail"}'   # map maken`);
+      lines.push(`GW PATCH 'v1.0/me/drive/items/{id}' -d '{"name":"nieuwe naam"}'   # hernoemen of verplaatsen (parentReference)`);
+    }
     lines.push('# Agenda');
     lines.push(`G "v1.0/me/calendarView?startDateTime=$(date -u +%Y-%m-%dT00:00:00Z)&endDateTime=$(date -u -d tomorrow +%Y-%m-%dT00:00:00Z)&\$select=subject,start,end,location,organizer&\$orderby=start/dateTime"`);
-    lines.push(`curl -sL -H "Authorization: Bearer $(cat ${tokenFile})" "https://graph.microsoft.com/v1.0/me/drive/items/{id}/content" -o bestand   # downloaden`);
-    lines.push('# Intune-app uitrollen (Store/winget; Win32 vraagt een .intunewin-bestand in de workspace)');
-    lines.push(`G "beta/deviceAppManagement/mobileApps?\$filter=isof('microsoft.graph.winGetApp')&\$select=id,displayName"`);
-    lines.push(`GW POST 'beta/deviceAppManagement/mobileApps' -d '{"@odata.type":"#microsoft.graph.winGetApp","displayName":"7-Zip","publisher":"Igor Pavlov","packageIdentifier":"9NBLGGH4R31J","installExperience":{"runAsAccount":"system"}}'`);
-    lines.push(`GW POST 'beta/deviceAppManagement/mobileApps/{appId}/assign' -d '{"mobileAppAssignments":[{"@odata.type":"#microsoft.graph.mobileAppAssignment","intent":"required","target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"{groupId}"}}]}'`);
+    if (!readOnly) {
+      lines.push(`GW POST 'v1.0/me/events' -d '{"subject":"..","start":{"dateTime":"2026-12-01T10:00:00","timeZone":"Europe/Amsterdam"},"end":{"dateTime":"2026-12-01T11:00:00","timeZone":"Europe/Amsterdam"}}'   # afspraak (attendees = uitnodiging versturen)`);
+      lines.push('# Intune-app uitrollen (Store/winget; Win32 vraagt een .intunewin-bestand in de workspace)');
+      lines.push(`G "beta/deviceAppManagement/mobileApps?\$filter=isof('microsoft.graph.winGetApp')&\$select=id,displayName"`);
+      lines.push(`GW POST 'beta/deviceAppManagement/mobileApps' -d '{"@odata.type":"#microsoft.graph.winGetApp","displayName":"7-Zip","publisher":"Igor Pavlov","packageIdentifier":"9NBLGGH4R31J","installExperience":{"runAsAccount":"system"}}'`);
+      lines.push(`GW POST 'beta/deviceAppManagement/mobileApps/{appId}/assign' -d '{"mobileAppAssignments":[{"@odata.type":"#microsoft.graph.mobileAppAssignment","intent":"required","target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"{groupId}"}}]}'`);
+    }
     lines.push('```');
     lines.push('Regels voor deze tenant:');
-    lines.push('- Alles is alleen-lezen, BEHALVE Intune-apps toevoegen en toewijzen.');
-    lines.push('- Een app toevoegen of toewijzen doe je pas nadat de gebruiker in dit gesprek expliciet "ja" heeft gezegd op een voorstel met: app, groep, intent (required/available).');
-    lines.push('- Nooit mail versturen, verwijderen of verplaatsen, en geen bestanden wijzigen.');
-    const ro = Array.isArray(conn.config.readOnlyAgents) ? (conn.config.readOnlyAgents as string[]) : [];
-    const none = Array.isArray(conn.config.noAccessAgents) ? (conn.config.noAccessAgents as string[]) : [];
-    if (none.length) lines.push(`- Deze agents hebben geen toegang tot deze tenant: ${none.join(', ')}. Geef ze geen Microsoft 365-gegevens of -opdrachten voor deze tenant en geef ze het token niet. Dit wordt ook technisch afgedwongen: hun aanroepen naar het token of Graph worden geblokkeerd.`);
-    if (ro.length) lines.push(`- Deze agents staan op Lezen voor deze tenant: ${ro.join(', ')}. Geef ze geen schrijfopdrachten voor Microsoft 365 en voer geen schrijfactie uit voor hen.`);
-    if (conn.config.m365Mode === 'read') lines.push('- Deze run heeft alleen Lezen voor deze tenant: voer geen schrijfacties uit (ook geen Intune-apps).');
+    if (readOnly) {
+      lines.push('- Alleen lezen: geen mail versturen, verplaatsen of verwijderen, geen bestanden of afspraken wijzigen.');
+    } else {
+      lines.push('- Gebruikers, groepen, licenties en tenantinstellingen blijven alleen-lezen.');
+      lines.push('- Lezen mag vrij. Mail markeren, verplaatsen, concepten maken, bestanden uploaden en mappen maken doe je als de gebruiker erom vraagt.');
+      lines.push('- Mail versturen, een uitnodiging versturen en verwijderen (mail, bestanden, afspraken) pas nadat de gebruiker in dit gesprek expliciet "ja" heeft gezegd op een voorstel met: aan, onderwerp, tekst (of wat er verdwijnt). Liever eerst een concept.');
+      lines.push('- Een Intune-app toevoegen of toewijzen pas na een expliciet "ja" op een voorstel met: app, groep, intent (required/available).');
+      const ro = Array.isArray(conn.config.readOnlyAgents) ? (conn.config.readOnlyAgents as string[]) : [];
+      const none = Array.isArray(conn.config.noAccessAgents) ? (conn.config.noAccessAgents as string[]) : [];
+      if (none.length) lines.push(`- Deze agents hebben geen toegang tot deze tenant: ${none.join(', ')}. Geef ze geen Microsoft 365-gegevens of -opdrachten voor deze tenant en geef ze het token niet. Dit wordt ook technisch afgedwongen: hun aanroepen naar het token of Graph worden geblokkeerd.`);
+      if (ro.length) lines.push(`- Deze agents staan op Lezen voor deze tenant: ${ro.join(', ')}. Geef ze geen schrijfopdrachten voor Microsoft 365 en voer geen schrijfactie uit voor hen.`);
+    }
     lines.push('');
   }
 
@@ -1463,7 +1581,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
     if (!token || !channels.length) continue;
     const tokenFile = '.messenger.token';
     writeFileSync(join(workspace, tokenFile), token, { mode: 0o600 });
-    chownSync(join(workspace, tokenFile), CLAUDE_UID, CLAUDE_GID);
+    chownRun(join(workspace, tokenFile));
     const names = channels.map(c => (c === 'telegram' ? (conn.config.botName ? `Telegram (bot ${conn.config.botName})` : 'Telegram') : 'WhatsApp (chat met zichzelf)')).join(' en ');
     lines.push(`## Berichten — ${names}`);
     lines.push('Je kunt een bericht sturen naar de eigen chat van de gebruiker. Alleen naar de gebruiker zelf, nooit naar anderen.');
@@ -1539,7 +1657,7 @@ export function setupConnectors(userId: string, connectors: ConnectorConfig[], l
 
   const claudeMdPath = join(workspace, 'CLAUDE.md');
   writeFileSync(claudeMdPath, BEHAVIOR_RULES + SAFETY_RULES + lines.join('\n') + historyNote(workspace), { mode: 0o644 });
-  chownSync(claudeMdPath, CLAUDE_UID, CLAUDE_GID);
+  chownRun(claudeMdPath);
   return stats;
 }
 
@@ -1555,7 +1673,7 @@ function writeBuiltinSkill(home: string, name: string, description: string, body
     if (existsSync(file) && readFileSync(file, 'utf8') === text) return;
     mkdirSync(dir, { recursive: true, mode: 0o750 });
     writeFileSync(file, text, { mode: 0o640 });
-    for (const p of [dir, file]) chownSync(p, CLAUDE_UID, 0);
+    for (const p of [dir, file]) chownRun(p);
   } catch (err) {
     console.error('[skills] could not write', name, (err as Error).message);
   }
@@ -1578,7 +1696,7 @@ function writeProtectedMarker(workspace: string): void {
       'Generated: ' + new Date().toISOString(),
     ].join('\n');
     writeFileSync(markerPath, content, { mode: 0o644 });
-    try { chownSync(markerPath, CLAUDE_UID, CLAUDE_GID); } catch { /* ignore */ }
+    try { chownRun(markerPath); } catch { /* ignore */ }
   }
 }
 
@@ -1594,8 +1712,9 @@ export async function runTask(
   language?: string,
   attachments?: AttachmentInfo[],
   model?: string,
-  opts: { privileged?: boolean; appendSystemPrompt?: string; conversationId?: string; werkplek?: boolean; project?: ProjectInfo | null; readOnly?: boolean } = {},
+  opts: { privileged?: boolean; appendSystemPrompt?: string; conversationId?: string; werkplek?: boolean; project?: ProjectInfo | null; readOnly?: boolean; promptSuggestions?: boolean } = {},
 ): Promise<{ sessionId: string }> {
+  await ensureRunUid(userId);
   ensureUserDirs(userId);
 
   const userHome = getUserHomeDir(userId);
@@ -1612,6 +1731,7 @@ export async function runTask(
     // admin chat: its CLAUDE.md is written fresh per run. Devices, GitHub and FocusTrack are long reference
     // texts: they go to on-demand skills (same text) and the CLAUDE.md keeps a pointer with the essential rules.
     const extra: string[] = [];
+    console.log(`[claude] privileged run ${opts.conversationId ?? '?'}${opts.werkplek ? ' (werkplek)' : ''}: koppelingen ${connectors.map(c => `${c.type}:${c.name}${c.credentials && Object.keys(c.credentials).length ? '' : '(geen credentials)'}`).join(', ')}`);
     writeBuiltinSkill(home, 'claude-chat-backups', 'Back-ups van claude-chat (dagelijks 03:00): overzicht en terugzetten van database en config per datum. Gebruik bij backup, terugzetten, restore, ga terug naar.', ['# Backups', BACKUPS_TEXT]);
     for (const c of connectors) {
       if (c.type === 'devices') {
@@ -1647,6 +1767,10 @@ export async function runTask(
         extra.push(...skillBacked(home, ninjaoneSection(workspace, c),
           { name: 'ninjaone-api', description: 'NinjaOne (RMM/PSA) tickets: borden, tickets lezen, logboek, toewijzen aan een technicus en privé-opmerkingen plaatsen via de lokale proxy. Gebruik bij ninjaone, ticket, bord, technicus, toewijzen, opmerking.' },
           [`NinjaOne via de lokale proxy http://127.0.0.1:4000/ninjaone/claude/v2/... met header x-ninjaone-token uit \`~/.ninjaone-${alias}.token\` (of in de werkruimte). Schrijven alleen als de opdracht of taak het toestaat; nooit een publieke opmerking. Endpoints en voorbeelden: skill ninjaone-api.`]));
+      } else if (c.type === 'gripp') {
+        extra.push(...grippSection(workspace, c));
+      } else if (c.type === 'icloud') {
+        extra.push(...icloudSection(workspace, c));
       } else if (c.type === 'focustrack') {
         const alias = c.name.replace(/[^a-zA-Z0-9_-]/g, '_');
         const sec = focustrackSection(workspace, c);
@@ -1674,7 +1798,7 @@ export async function runTask(
     const langLabel = languageLabel(language);
     const claudeMdPath = join(workspace, 'CLAUDE.md');
     writeFileSync(claudeMdPath, BEHAVIOR_RULES + SAFETY_RULES + `Always respond in ${langLabel}.\n` + historyNote(workspace), { mode: 0o644 });
-    chownSync(claudeMdPath, CLAUDE_UID, CLAUDE_GID);
+    chownRun(claudeMdPath);
   }
 
   // Chats in a project run in the shared project dir
@@ -1694,7 +1818,7 @@ export async function runTask(
   try {
     const { writeAgentsFile, agentsSystemPrompt } = await import('./agents');
     const projAgents = opts.project?.shared ? await import('./sharedProjects').then((m) => m.projectRunAgents(opts.project!.id, userId)) : undefined;
-    const written = await writeAgentsFile(userId, home, 1001, opts.privileged ? 0 : 1001, projAgents);
+    const written = await writeAgentsFile(userId, home, spawnIds(userId, opts.privileged).uid, 0, projAgents);
     if (written) {
       args.push('--agents', written.path);
       for (const a of written.agents) agentBySlug.set(a.slug, { id: a.id, name: a.name });
@@ -1765,6 +1889,7 @@ ${att.textContent}
     // advice-only runs (federation consultation): no tools that change anything
     ...(opts.readOnly ? ['--disallowedTools', 'Bash,Edit,Write,MultiEdit,NotebookEdit,Task,WebFetch,WebSearch'] : []),
     '--dangerously-skip-permissions',
+    ...(opts.promptSuggestions ? ['--prompt-suggestions', 'true'] : []),
   );
   if (appendPrompt) args.push('--append-system-prompt', appendPrompt);
 
@@ -1790,11 +1915,32 @@ ${att.textContent}
   // (claudeAccounts.ts). The home stays the user's own, so all accounts share the conversations.
   // (a switch before the message starts is silent; only a switch in the middle of an answer is
   // announced, see the failover in routes/stream.ts)
-  // an agent's own run (workplace, task) can be limited to certain accounts (agents.account_slots)
-  const allowedSlots = opts.conversationId
-    ? await import('./agents').then((m) => m.accountSlotsForConversation(opts.conversationId!)).catch(() => null)
-    : null;
-  const account = await pickAccount(userId, allowedSlots);
+  // an agent's own run (workplace, task) can be limited to certain accounts (agents.account_slots); an agent
+  // shared by someone else can run on the owner's subscription (share_account): only that login is used,
+  // the home, workspace, memory and connectors stay the user's (the token goes in via env)
+  let runAcct = opts.conversationId
+    ? await import('./agents').then((m) => m.resolveRunAccount(opts.conversationId!))
+    : { accountUserId: null, slots: null } as import('./agents').RunAccount;
+  // shared project: an @agent that runs on its owner's subscription (per project: account_mode owner, with fallback)
+  if (opts.project?.shared && !opts.privileged) {
+    try {
+      const { projectAgentAccount } = await import('./sharedProjects');
+      const { ownerAccountState } = await import('./agents');
+      const pa = await projectAgentAccount(opts.project.id, userId, message);
+      if (pa) {
+        const st = await ownerAccountState(pa.ownerId, pa.slots);
+        if (!st.full) runAcct = { accountUserId: pa.ownerId, slots: pa.slots, viaOwner: { agentId: pa.agentId, agentName: pa.agentName, ownerId: pa.ownerId } };
+        else if (pa.fallback) runAcct = { accountUserId: null, slots: null, fallback: { owner: (await (await import('../db')).query<{ n: string }>('SELECT COALESCE(name, email) AS n FROM users WHERE id = $1', [pa.ownerId])).rows[0]?.n ?? '', usableAt: st.usableAt } };
+        else throw new Error('Tijdelijk niet beschikbaar: het abonnement van de eigenaar van deze agent is vol');
+      }
+    } catch (e) { if ((e as Error).message.startsWith('Tijdelijk')) throw e; console.error('[shared] agent account failed:', (e as Error).message); }
+  }
+  const account = await pickAccount(runAcct.accountUserId ?? userId, runAcct.slots);
+  if (runAcct.viaOwner) {
+    void import('../middleware/auth').then(({ auditLog }) => auditLog(userId, 'agent.owner_account_run', 'agent', runAcct.viaOwner!.agentId, '',
+      { agent: runAcct.viaOwner!.agentName, owner_id: runAcct.viaOwner!.ownerId, slot: account.slot, counts_against: 'owner' })).catch(() => { /* optional */ });
+  }
+  if (runAcct.fallback) onEvent({ type: 'limit_note', kind: 'owner_full', owner: runAcct.fallback.owner, usableAt: runAcct.fallback.usableAt } as unknown as ClaudeEvent);
   const accessToken = account.token ?? await getValidAccessToken(userHome, { forRun: true });
   beginAccountRun(account.dir);
   let runEnded = false;
@@ -1809,8 +1955,9 @@ ${att.textContent}
     stdio: hasImages ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
     // The backend runs as root; spawning with uid/gid also drops all supplementary groups.
     // gid 0 is what grants the docker socket (root:root 660) and the project dir (root:root 750 parent),
-    // so only the admin system chat gets it. Normal chats, admins included, stay on 1001:1001.
-    uid: 1001, gid: opts.privileged ? 0 : 1001,
+    // so only the admin system chat gets it (uid 1001). Normal chats, admins included, run as their own
+    // run_uid with a private gid (services/runUsers.ts), so users cannot read each other's home or workspace.
+    ...spawnIds(userId, opts.privileged, opts.project?.shared?.gid),
   });
 
   if (hasImages) {
@@ -2112,6 +2259,12 @@ export function parseRawEvent(raw: Record<string, unknown>, st: ParseState = new
   const sid = raw.session_id as string | undefined;
   const parent = raw.parent_tool_use_id as string | null | undefined;
 
+  if (raw.type === 'prompt_suggestion') {
+    const text = typeof raw.suggestion === 'string' ? raw.suggestion.trim() : '';
+    if (text) events.push({ type: 'prompt_suggestion', suggestion: text.slice(0, 400), sessionId: sid });
+    return events;
+  }
+
   // Messages from inside a subagent: never part of the main answer. For one of the user's own
   // agents only its tool calls are passed on, as live status in its bubble.
   if (parent) {
@@ -2390,6 +2543,7 @@ function logStructuredUsage(userId: string, action: string, model: string, u: St
 }
 
 async function structuredOnce<T>(userId: string, opts: { system: string; prompt: string; schema: object; model?: string; timeoutMs?: number }): Promise<({ value: T } | { limit: string }) & { usage?: StructUsage; cost?: number }> {
+  await ensureRunUid(userId);
   ensureUserDirs(userId);
   const home = getUserHomeDir(userId);
   const account = await pickAccount(userId);
@@ -2398,10 +2552,10 @@ async function structuredOnce<T>(userId: string, opts: { system: string; prompt:
   beginAccountRun(account.dir);
   const cwd = join(home, '.assist-tmp');
   mkdirSync(cwd, { recursive: true });
-  try { chownSync(cwd, CLAUDE_UID, CLAUDE_GID); } catch { /* ignore */ }
+  try { chownRun(cwd); } catch { /* ignore */ }
   const args = ['--print', '--output-format', 'json', '--no-session-persistence', '--tools', '',
     '--model', opts.model ?? 'sonnet', '--system-prompt', opts.system, '--json-schema', JSON.stringify(opts.schema)];
-  const child = spawn('claude', args, { env: buildEnv(home, token), cwd, stdio: ['pipe', 'pipe', 'pipe'], uid: CLAUDE_UID, gid: CLAUDE_GID });
+  const child = spawn('claude', args, { env: buildEnv(home, token), cwd, stdio: ['pipe', 'pipe', 'pipe'], ...spawnIds(userId) });
   child.stdin!.end(opts.prompt);
   let out = '', err = '';
   child.stdout!.on('data', (d: Buffer) => { out += d.toString(); });

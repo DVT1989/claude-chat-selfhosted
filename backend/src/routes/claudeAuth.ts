@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { requireAuth, auditLog } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { startAuthLogin, exchangeOAuthCode, getAuthStatus, getUserHomeDir } from '../services/claudeCode';
-import { accountsOverview, nextSlot, removeAccount } from '../services/claudeAccounts';
+import { accountsOverview, nextSlot, removeAccount, getAccountSwitch } from '../services/claudeAccounts';
+import { query } from '../db';
 
 export const claudeAuthRouter = Router();
 claudeAuthRouter.use(requireAuth);
@@ -40,6 +41,24 @@ claudeAuthRouter.get('/accounts', async (req: Request, res: Response, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Chat account choice: automatic switching (all or chosen accounts) or one fixed account
+claudeAuthRouter.get('/switching', async (req: Request, res: Response, next) => {
+  try { res.json(await getAccountSwitch(req.user!.userId)); } catch (err) { next(err); }
+});
+
+claudeAuthRouter.put('/switching', async (req: Request, res: Response, next) => {
+  try {
+    const b = z.object({
+      auto: z.boolean(),
+      slots: z.array(z.number().int().min(0).max(20)).max(20).nullable(),
+      fixed: z.number().int().min(0).max(20),
+    }).parse(req.body);
+    const v = { auto: b.auto, slots: b.slots?.length ? [...new Set(b.slots)].sort((x, y) => x - y) : null, fixed: b.fixed };
+    await query("UPDATE users SET preferences = COALESCE(preferences, '{}'::jsonb) || jsonb_build_object('account_switch', $1::jsonb) WHERE id = $2", [JSON.stringify(v), req.user!.userId]);
+    res.json(v);
+  } catch (err) { next(err); }
 });
 
 // Exchange the authorization code for OAuth tokens and write credentials

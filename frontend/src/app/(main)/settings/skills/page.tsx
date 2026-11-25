@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from '@/components/ui/EmptyState';
 import { NavIcons } from '@/components/navItems';
-import { skills as skillsApi, type SkillsManifest } from '@/lib/api';
+import { skills as skillsApi, agentsApi, type SkillsManifest, type ShareTargets } from '@/lib/api';
+import clsx from 'clsx';
 import { useFocusParam } from '@/components/useFocusParam';
 import { useAuthStore } from '@/lib/store';
 
@@ -104,6 +105,53 @@ function AddSkill({ onDone, onCancel }: { onDone: (name: string) => void; onCanc
   );
 }
 
+/** Upload a .skill or .zip export (Claude Desktop), including its assets. */
+function ZipUpload({ onDone, onCancel }: { onDone: (msg: string) => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [over, setOver] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+
+  async function send(f: File | undefined) {
+    if (!f) return;
+    if (!/\.(skill|zip)$/i.test(f.name)) { setError('Kies een .skill- of .zip-bestand.'); return; }
+    if (f.size > 30 * 1024 * 1024) { setError('Bestand is te groot (max 30 MB).'); return; }
+    setBusy(true); setError('');
+    try {
+      const r = await skillsApi.upload(f);
+      const names = r.imported.map((i) => i.name);
+      if (!names.length) { setError(`Niets toegevoegd: ${r.skipped.map((s) => `${s.path}: ${s.reason}`).join('; ') || 'geen skill gevonden'}`); return; }
+      let msg = names.length === 1 ? `"${names[0]}" is toegevoegd, met bijbehorende bestanden.` : `${names.length} skills toegevoegd: ${names.join(', ')}.`;
+      if (r.skipped.length) msg += ` Overgeslagen: ${r.skipped.map((s) => `${s.path || '/'} (${s.reason})`).join(', ')}.`;
+      onDone(msg);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); void send(e.dataTransfer.files?.[0]); }}
+        className={`rounded-card border border-dashed px-4 py-8 text-center transition-colors ${over ? 'border-(--accent) bg-(--accent)/10' : 'border-(--border)'}`}>
+        <p className="text-sm text-(--text)">Sleep een .skill- of .zip-bestand hierheen</p>
+        <p className="text-xs text-(--muted) mt-1">Zoals je het uit Claude Desktop downloadt. Scripts en andere bestanden in de skill gaan mee. Zelfde naam vervangt je eigen skill.</p>
+        <button type="button" disabled={busy} onClick={() => ref.current?.click()}
+          className="mt-4 px-4 py-2 rounded-control bg-(--accent-strong) text-white text-sm font-medium disabled:opacity-50">
+          {busy ? 'Uploaden…' : 'Bestand kiezen'}
+        </button>
+        <input ref={ref} type="file" accept=".skill,.zip,application/zip" className="hidden"
+          onChange={(e) => { void send(e.target.files?.[0]); e.target.value = ''; }} />
+      </div>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      <button type="button" onClick={onCancel} className="px-4 py-2 rounded-control text-sm text-(--muted) hover:text-(--text)">Annuleren</button>
+    </div>
+  );
+}
+
 /** Import skills from a public GitHub repo, folder or SKILL.md link. */
 function GithubImport({ onDone, onCancel }: { onDone: (msg: string) => void; onCancel: () => void }) {
   const [url, setUrl] = useState('');
@@ -152,13 +200,17 @@ function GithubImport({ onDone, onCancel }: { onDone: (msg: string) => void; onC
 
 /** "Skill toevoegen" panel: from GitHub (default) or written here / uploaded. */
 function AddPanel({ onDone, onCancel }: { onDone: (msg: string) => void; onCancel: () => void }) {
-  const [mode, setMode] = useState<'github' | 'zelf'>('github');
+  const [mode, setMode] = useState<'github' | 'upload' | 'zelf'>('github');
   return (
     <div className="rounded-card border border-(--border) bg-(--input) p-5 space-y-4">
       <div className="sub-tabs">
         <button type="button" onClick={() => setMode('github')} className={`sub-tab ${mode === 'github' ? 'sub-tab-on' : ''}`}>
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 .5a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 12 .5Z" /></svg>
           <span>Van GitHub</span>
+        </button>
+        <button type="button" onClick={() => setMode('upload')} className={`sub-tab ${mode === 'upload' ? 'sub-tab-on' : ''}`}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" aria-hidden><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M5 20h14" /></svg>
+          <span>Bestand uploaden</span>
         </button>
         <button type="button" onClick={() => setMode('zelf')} className={`sub-tab ${mode === 'zelf' ? 'sub-tab-on' : ''}`}>
           <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" aria-hidden><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
@@ -167,6 +219,8 @@ function AddPanel({ onDone, onCancel }: { onDone: (msg: string) => void; onCance
       </div>
       {mode === 'github'
         ? <GithubImport onDone={onDone} onCancel={onCancel} />
+        : mode === 'upload'
+        ? <ZipUpload onDone={onDone} onCancel={onCancel} />
         : <AddSkill onCancel={onCancel} onDone={(name) => onDone(`"${name}" is opgeslagen. Claude gebruikt hem vanaf je volgende bericht.`)} />}
     </div>
   );
@@ -200,12 +254,12 @@ export default function SkillsPage() {
     }
   }
 
-  async function share(name: string, shared: boolean) {
+  async function share(name: string, visibility: 'private' | 'selected' | 'all', users: string[], groups: string[]) {
     setSharing(name); setNotice('');
     try {
-      await skillsApi.share(name, shared);
-      setData((d) => d && { ...d, own: d.own?.map((x) => (x.name === name ? { ...x, shared } : x)) });
-      setNotice(shared ? `"${name}" is nu voor iedereen beschikbaar.` : `"${name}" wordt niet meer gedeeld.`);
+      await skillsApi.share(name, visibility, users, groups);
+      setData((d) => d && { ...d, own: d.own?.map((x) => (x.name === name ? { ...x, shared: visibility !== 'private', share: { visibility, users, groups } } : x)) });
+      setNotice(visibility === 'all' ? `"${name}" is nu voor iedereen beschikbaar.` : visibility === 'selected' ? `"${name}" is gedeeld met je keuze.` : `"${name}" wordt niet meer gedeeld.`);
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -302,15 +356,10 @@ export default function SkillsPage() {
               <li key={s.name} data-focus-id={s.name} className="px-4 py-3 bg-(--input) flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <span className="font-mono text-[13px] text-(--text) break-all">{s.name}</span>
-                  {s.shared && <span className="tr-line ml-2 align-middle text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent)">gedeeld met iedereen</span>}
+                  {s.shared && <span className="tr-line ml-2 align-middle text-[11px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent)">
+                    {s.share?.visibility === 'selected' ? `gedeeld met ${(s.share.users.length + s.share.groups.length)} keuze${(s.share.users.length + s.share.groups.length) === 1 ? '' : 's'}` : 'gedeeld met iedereen'}</span>}
                   {s.description && <p className="text-sm text-(--muted) mt-1 line-clamp-3">{s.description}</p>}
-                  {isAdmin && (
-                    <label className="mt-2 inline-flex items-center gap-2 text-xs text-(--muted) cursor-pointer min-h-8">
-                      <button type="button" role="switch" aria-checked={!!s.shared} aria-label={`${s.name} delen met iedereen`} disabled={sharing === s.name}
-                        onClick={() => void share(s.name, !s.shared)} className="ll-switch disabled:opacity-50" />
-                      Delen met iedereen
-                    </label>
-                  )}
+                  {isAdmin && <SkillSharePanel name={s.name} share={s.share ?? { visibility: 'private', users: [], groups: [] }} busy={sharing === s.name} onSave={share} />}
                   {s.source && (
                     <a href={s.source} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-(--accent) hover:underline break-all">
                       {s.source.replace(/^https:\/\/github\.com\//, 'github.com/').replace(/\/tree\/HEAD/, '')}
@@ -387,6 +436,61 @@ export default function SkillsPage() {
             ))}
           </ul>
         </section>
+      )}
+    </div>
+  );
+}
+
+
+function SkillSharePanel({ name, share, busy, onSave }: {
+  name: string; share: { visibility: 'private' | 'selected' | 'all'; users: string[]; groups: string[] }; busy: boolean;
+  onSave: (name: string, v: 'private' | 'selected' | 'all', u: string[], g: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [targets, setTargets] = useState<ShareTargets | null>(null);
+  const vis = share.visibility, users = share.users, groups = share.groups;
+  useEffect(() => { if (open && !targets) agentsApi.shareTargets().then(setTargets).catch(() => undefined); }, [open, targets]);
+  const flip = (arr: string[], id: string) => (arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
+  const seg = (on: boolean) => clsx('flex-1 px-3 py-1.5 rounded-lg text-sm transition-colors duration-200 disabled:opacity-60',
+    on ? 'bg-(--accent-strong) text-white shadow-sm' : 'text-(--muted) hover:text-(--text)');
+  const chip = (on: boolean) => clsx('min-h-11 rounded-xl border px-3 py-2 cursor-pointer transition-colors duration-200 flex items-center gap-2 text-sm text-(--text)',
+    on ? 'border-(--accent) bg-(--accent)/10' : 'border-(--border) bg-(--bg) hover:border-(--accent)/50');
+  return (
+    <div className="mt-2">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-xs text-(--muted) hover:text-(--text) transition-colors min-h-8">
+        Delen: {vis === 'all' ? 'iedereen' : vis === 'selected' ? 'keuze' : 'alleen ik'}
+      </button>
+      {open && (
+        <div className="space-y-2 pt-1">
+          <div className="flex gap-1 p-1 rounded-xl border border-(--border) bg-(--bg) max-w-md" role="radiogroup" aria-label="Delen">
+            {([['private', 'Alleen ik'], ['selected', 'Kiezen'], ['all', 'Iedereen']] as const).map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={vis === v} disabled={busy} className={seg(vis === v)}
+                onClick={() => vis !== v && onSave(name, v, users, groups)}>{label}</button>
+            ))}
+          </div>
+          {vis === 'selected' && targets && (
+            <div className="space-y-2">
+              {!!targets.groups.length && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {targets.groups.map((g) => (
+                    <label key={g.id} className={chip(groups.includes(g.id))}>
+                      <input type="checkbox" checked={groups.includes(g.id)} disabled={busy} onChange={() => onSave(name, 'selected', users, flip(groups, g.id))} />
+                      <span className="truncate">Groep: {g.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="grid gap-2 sm:grid-cols-2">
+                {targets.users.map((u) => (
+                  <label key={u.id} className={chip(users.includes(u.id))}>
+                    <input type="checkbox" checked={users.includes(u.id)} disabled={busy} onChange={() => onSave(name, 'selected', flip(users, u.id), groups)} />
+                    <span className="truncate">{u.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

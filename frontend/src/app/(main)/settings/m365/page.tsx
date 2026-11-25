@@ -8,7 +8,7 @@ import { M365LevelSeg, M365_LEVELS, type M365Level } from '@/components/M365Leve
 
 interface Tenant {
   id: string; name: string; is_active: boolean; test_status: string | null; test_message: string | null;
-  config: { tenantId: string; tenantName: string; account: string; agent_access?: Record<string, M365Level> };
+  config: { tenantId: string; tenantName: string; account: string; agent_access?: Record<string, 'read' | 'write'> };
 }
 interface Login { userCode: string; verificationUri: string; expiresAt: string }
 
@@ -19,13 +19,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-const btn = 'text-sm font-medium px-4 py-2 rounded-lg transition-[filter,transform,background-color] duration-150 active:scale-[0.97] disabled:opacity-50';
+type Level = M365Level;
 
-/** One agent with access: avatar, name and a two-step segment; saved at once, check mark on success. */
-function AccessRow({ agent, level, onSet }: { agent: AgentDef; level: M365Level; onSet: (l: M365Level) => Promise<void> }) {
+/** One agent with access: avatar, name and a two-step segment; saved at once, check mark on success, slides back on error. */
+function AccessRow({ agent, level, onSet }: { agent: AgentDef; level: Level; onSet: (l: Level) => Promise<void> }) {
   const [ok, setOk] = useState(false);
   const [error, setError] = useState(false);
-  async function pick(l: M365Level) {
+  async function pick(l: Level) {
     if (l === level) return;
     setError(false);
     try { await onSet(l); setOk(true); setTimeout(() => setOk(false), 1200); }
@@ -34,9 +34,9 @@ function AccessRow({ agent, level, onSet }: { agent: AgentDef; level: M365Level;
   return (
     <div className="m3-row px-3 sm:px-1 py-1.5">
       <div className="flex items-center gap-3 min-h-9">
-        <AgentAvatar name={agent.name} avatar={agent.avatar} color={agent.color} className="w-7 h-7 text-[11px] shrink-0" />
+        <AgentAvatar name={agent.name} avatar={agent.avatar} color={agent.color} className="m3-who m3-av w-7 h-7 text-[11px] shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-(--text) truncate">{agent.name}</p>
+          <p className="m3-who m3-name text-sm font-medium text-(--text) truncate">{agent.name}</p>
           <p className="sm:hidden text-xs text-(--muted)">{M365_LEVELS.find((l) => l.v === level)?.full}</p>
         </div>
         <svg className={clsx('m3-ok w-3.5 h-3.5 shrink-0', ok && 'is-on')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m5 12 5 5 9-10" /></svg>
@@ -49,28 +49,34 @@ function AccessRow({ agent, level, onSet }: { agent: AgentDef; level: M365Level;
   );
 }
 
-/** Agents with access to this tenant (switch under Instellingen > Agents > Koppelingen) and their level; "Lezen" gets a token with only read rights. */
-function AgentAccess({ tenant, agents }: { tenant: Tenant; agents: AgentDef[] }) {
+/** Agents with access to this tenant (switch under Instellingen > Agents > Koppelingen) and their level: "Lezen" gets a token with only read rights. */
+function AgentAccess({ tenant, agents, onSaved }: { tenant: Tenant; agents: AgentDef[]; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
-  const [access, setAccess] = useState<Record<string, M365Level>>(tenant.config.agent_access ?? {});
+  const [access, setAccess] = useState<Record<string, 'read' | 'write'>>(tenant.config.agent_access ?? {});
   const withAccess = agents.filter((a) => access[a.id]);
   const nRead = withAccess.filter((a) => access[a.id] === 'read').length;
-  const summary = withAccess.length ? `${nRead} lezen, ${withAccess.length - nRead} lezen en schrijven` : 'geen agent heeft toegang';
-  async function set(id: string, l: M365Level) {
+  const nWrite = withAccess.length - nRead;
+  const summary = withAccess.length ? `${nRead} lezen, ${nWrite} lezen en schrijven` : 'geen agent heeft toegang';
+  async function set(id: string, l: Level) {
+    const prev = access;
     const next = { ...access, [id]: l };
-    await api(`/tenants/${tenant.id}/access`, { method: 'PUT', body: JSON.stringify({ access: next }) });
     setAccess(next);
+    try { await api(`/tenants/${tenant.id}/access`, { method: 'PUT', body: JSON.stringify({ access: next }) }); onSaved(); }
+    catch (e) { setAccess(prev); throw e; }
   }
+  if (!agents.length) return null;
   return (
-    <div className="px-4 pb-3 -mt-1">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex items-center gap-1.5 text-xs text-(--muted) hover:text-(--text) transition-colors">
-        <svg className={clsx('m3-chev w-3.5 h-3.5', open && 'is-open')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
-        Rechten per agent: {summary}
+    <div className="m3-lvl px-4 pb-2">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="w-full min-h-11 flex items-center gap-3 border-t border-(--border) text-left">
+        <span className="text-sm font-semibold text-(--text)">Rechten per agent</span>
+        <span className="flex-1 min-w-0 text-right text-xs text-(--muted) truncate">{summary}</span>
+        <svg className={clsx('m3-chev w-4 h-4 text-(--muted) shrink-0', open && 'is-open')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
       </button>
-      <div className={clsx('ll-fold', !open && 'is-shut')} inert={!open}>
+      <div className={clsx('ll-fold', !open && 'is-shut')}>
         <div>
           {withAccess.length ? (
-            <div className="divide-y divide-(--border) -mx-3 sm:mx-0 pt-1">
+            <div className="divide-y divide-(--border) -mx-3 sm:mx-0">
               {withAccess.map((a) => <AccessRow key={a.id} agent={a} level={access[a.id]} onSet={(l) => set(a.id, l)} />)}
             </div>
           ) : (
@@ -83,17 +89,19 @@ function AgentAccess({ tenant, agents }: { tenant: Tenant; agents: AgentDef[] })
   );
 }
 
+const btn = 'text-sm font-medium px-4 py-2 rounded-lg transition-[filter,transform,background-color] duration-150 active:scale-[0.97] disabled:opacity-50';
+
 export default function M365Page() {
-  const [agents, setAgents] = useState<AgentDef[]>([]);
-  useEffect(() => { agentsApi.list().then((r) => setAgents(r.agents.filter((a) => !a.shared_by))).catch(() => {}); }, []);
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [login, setLogin] = useState<Login | null>(null);
   const [state, setState] = useState<'idle' | 'waiting' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [agents, setAgents] = useState<AgentDef[]>([]);
 
   const load = () => api<{ tenants: Tenant[] }>('/tenants').then((r) => setTenants(r.tenants)).catch((e) => { setState('error'); setMessage(e.message); });
+  useEffect(() => { agentsApi.list().then((r) => setAgents(r.agents.filter((a) => !a.shared_by))).catch(() => undefined); }, []);
   useEffect(() => { void load(); return () => { if (timer.current) clearInterval(timer.current); }; }, []);
 
   async function start() {
@@ -125,7 +133,7 @@ export default function M365Page() {
       <div>
         <h1 className="text-xl font-semibold text-(--text)">Microsoft 365</h1>
         <p className="text-sm text-(--muted) mt-1">
-          Lezen, plus Intune-apps uitrollen en bestanden in OneDrive en SharePoint schrijven, alleen op jouw verzoek. Na nieuwe rechten de tenant opnieuw koppelen.
+          Volledig beheer met het gekoppelde account: mail en gedeelde mailboxen, OneDrive, SharePoint en agenda. Versturen en verwijderen pas na jouw akkoord. Agents hebben standaard geen toegang; per agent kies je lezen of lezen en schrijven. Na nieuwe rechten de tenant opnieuw koppelen.
         </p>
       </div>
 
@@ -148,6 +156,7 @@ export default function M365Page() {
               <p className="text-sm font-medium text-(--text) truncate">{t.config.tenantName}</p>
               <p className="text-xs text-(--muted) truncate">{t.config.account} · {t.config.tenantId}</p>
               {t.test_status === 'error' && <p className="text-xs text-red-400 mt-0.5">{t.test_message ?? 'Opnieuw inloggen nodig'}</p>}
+              {t.test_status !== 'error' && t.test_message && <p className="text-xs text-amber-500 mt-0.5">{t.test_message}</p>}
             </div>
             <span className={clsx('text-[0.7rem] px-2 py-0.5 rounded-full shrink-0',
               t.test_status === 'error' ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-500')}>
@@ -155,7 +164,7 @@ export default function M365Page() {
             </span>
             <button onClick={() => void remove(t)} className="text-xs text-(--muted) hover:text-red-400 transition-colors px-2 py-1">Verwijderen</button>
           </div>
-          <AgentAccess tenant={t} agents={agents} />
+          <AgentAccess tenant={t} agents={agents} onSaved={() => void load()} />
           </div>
         ))}
       </section>

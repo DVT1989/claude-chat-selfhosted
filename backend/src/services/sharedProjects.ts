@@ -16,8 +16,6 @@ export async function ensureSharedProjectSchema(): Promise<void> {
     PRIMARY KEY (project_id, user_id)
   )`);
   await query('CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)');
-  // the creator is the first member (also see database/migrations/012); projects.user_id stays the technical anchor
-  await query('INSERT INTO project_members (project_id, user_id) SELECT id, user_id FROM projects ON CONFLICT DO NOTHING');
   await query(`CREATE TABLE IF NOT EXISTS project_connectors (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     connector_id UUID NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
@@ -114,12 +112,7 @@ export async function ensureColors(projectId: string): Promise<void> {
   if (own?.owner_color && mem.every((m) => m.color)) return;
   const used = new Set<string>([own?.owner_color, ...mem.map((m) => m.color)].filter(Boolean) as string[]);
   if (own && !own.owner_color) { const c = nextColor(used); used.add(c); await query('UPDATE projects SET owner_color = $2 WHERE id = $1', [projectId, c]); }
-  const ownerNow = (await query<{ owner_color: string | null; user_id: string }>('SELECT owner_color, user_id FROM projects WHERE id = $1', [projectId])).rows[0];
   for (const m of mem.filter((x) => !x.color)) {
-    if (ownerNow && m.user_id === ownerNow.user_id) { // the creator also has a member row: same colour as owner_color
-      if (ownerNow.owner_color) await query('UPDATE project_members SET color = $3 WHERE project_id = $1 AND user_id = $2', [projectId, m.user_id, ownerNow.owner_color]).catch(() => undefined);
-      continue;
-    }
     const c = nextColor(used); used.add(c);
     await query('UPDATE project_members SET color = $3 WHERE project_id = $1 AND user_id = $2', [projectId, m.user_id, c]).catch(() => { /* race: next call retries */ });
   }
@@ -134,11 +127,8 @@ export async function setMemberColor(projectId: string, userId: string, color: s
      UNION ALL SELECT 1 FROM projects WHERE id = $1 AND owner_color = $2 AND user_id <> $3`, [projectId, color, userId]);
   if (taken.rowCount) throw new Error('Kleur is al in gebruik');
   const isOwner = (await query('SELECT 1 FROM projects WHERE id = $1 AND user_id = $2', [projectId, userId])).rowCount;
-  if (isOwner) {
-    await query('UPDATE project_members SET color = NULL WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
-    await query('UPDATE projects SET owner_color = $2 WHERE id = $1', [projectId, color]);
-    await query('UPDATE project_members SET color = $3 WHERE project_id = $1 AND user_id = $2', [projectId, userId, color]);
-  } else await query('UPDATE project_members SET color = $3 WHERE project_id = $1 AND user_id = $2', [projectId, userId, color]);
+  if (isOwner) await query('UPDATE projects SET owner_color = $2 WHERE id = $1', [projectId, color]);
+  else await query('UPDATE project_members SET color = $3 WHERE project_id = $1 AND user_id = $2', [projectId, userId, color]);
 }
 
 export interface ConvAccess { conversationId: string; ownerId: string; projectId: string | null; projectOwnerId: string | null; shared: boolean }
@@ -147,7 +137,7 @@ export interface ConvAccess { conversationId: string; ownerId: string; projectId
 export async function convAccess(convId: string, userId: string): Promise<ConvAccess | null> {
   const r = await query<{ id: string; user_id: string; project_id: string | null; powner: string | null; members: number; gid: number | null }>(
     `SELECT c.id, c.user_id, c.project_id, p.user_id AS powner, p.gid,
-            (SELECT count(*)::int FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id <> p.user_id) AS members
+            (SELECT count(*)::int FROM project_members pm WHERE pm.project_id = p.id) AS members
      FROM conversations c LEFT JOIN projects p ON p.id = c.project_id
      WHERE c.id = $1 AND c.status != 'deleted'
        AND ((c.project_id IS NULL AND c.user_id = $2)
@@ -165,7 +155,7 @@ export interface ProjectAccess { id: string; name: string; instructions: string;
 export async function projectAccess(projectId: string, userId: string): Promise<ProjectAccess | null> {
   const r = await query<{ id: string; name: string; instructions: string; user_id: string; gid: number | null; members: number }>(
     `SELECT p.id, p.name, p.instructions, p.user_id, p.gid,
-            (SELECT count(*)::int FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id <> p.user_id) AS members
+            (SELECT count(*)::int FROM project_members pm WHERE pm.project_id = p.id) AS members
      FROM projects p
      WHERE p.id = $1 AND (p.user_id = $2 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = $2))`,
     [projectId, userId]);
@@ -180,7 +170,7 @@ export async function projectMembers(projectId: string): Promise<MemberInfo[]> {
   const sel = () => query<MemberInfo>(
     `SELECT u.id, COALESCE(u.name, u.email) AS name, u.avatar, false AS is_owner, p.owner_color AS color FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = $1
      UNION ALL
-     SELECT u.id, COALESCE(u.name, u.email), u.avatar, false, pm.color FROM project_members pm JOIN users u ON u.id = pm.user_id JOIN projects p ON p.id = pm.project_id WHERE pm.project_id = $1 AND u.is_active AND pm.user_id <> p.user_id
+     SELECT u.id, COALESCE(u.name, u.email), u.avatar, false, pm.color FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = $1 AND u.is_active
      ORDER BY 2`, [projectId]);
   let rows = (await sel()).rows;
   if (rows.length > 1 && rows.some((m) => !m.color)) {
@@ -227,7 +217,7 @@ export async function projectAgentRows(projectId: string, actorId: string): Prom
   const extra = (await query<{ id: string; name: string; avatar: string | null; color: string | null; description: string; user_id: string }>(
     `SELECT a.id, a.name, a.avatar, a.color, a.description, a.user_id FROM agents a WHERE a.id = ANY($1::uuid[]) AND a.is_active`,
     [pa.filter((x) => x.enabled && !have.has(x.agent_id)).map((x) => x.agent_id)])).rows;
-  const all = [...list.map((a) => ({ id: a.id, name: a.name, avatar: a.avatar ?? null, color: a.color ?? null, description: a.description, owner_id: a.owner_id, sa: 'user' as const, sf: true })),
+  const all = [...list.map((a) => ({ id: a.id, name: a.name, avatar: a.avatar ?? null, color: a.color ?? null, description: a.description, owner_id: a.owner_id, sa: a.share_account ?? 'user', sf: a.share_fallback ?? true })),
     ...extra.map((a) => ({ id: a.id, name: a.name, avatar: a.avatar, color: a.color, description: a.description, owner_id: a.user_id, sa: 'user' as const, sf: true }))];
   const holder = (a: { id: string; owner_id: string }) => pa.find((x) => x.agent_id === a.id)?.added_by ?? a.owner_id;
   const names = new Map((await query<{ id: string; n: string }>('SELECT id, COALESCE(name, email) AS n FROM users WHERE id = ANY($1::uuid[])', [[...new Set(all.map(holder))]])).rows.map((u) => [u.id, u.n]));
@@ -282,7 +272,7 @@ export async function projectRunAgents(projectId: string, userId: string): Promi
   const r = await query<import('./agents').Agent>(
     `SELECT a.id, a.name, a.slug, a.description, a.prompt, a.model, a.avatar, a.color, a.created_at, a.visibility,
             a.share_users::text[] AS share_users, a.share_groups::text[] AS share_groups, a.user_id AS owner_id, TRUE AS is_active,
-            CASE WHEN a.user_id = $2 THEN a.knowledge END AS knowledge, '{}'::text[] AS connector_ids
+            CASE WHEN a.user_id = $2 THEN a.knowledge END AS knowledge, a.share_account, a.share_fallback, '{}'::text[] AS connector_ids
      FROM agents a WHERE a.id = ANY($1::uuid[]) ORDER BY a.created_at`, [ids, userId]);
   return r.rows;
 }
@@ -337,11 +327,13 @@ export async function leaveProject(projectId: string, targetId: string): Promise
   if (members.length <= 1) throw new Error('Je bent het laatste lid: een project zonder leden kan niet. Verwijder het project als je het niet meer nodig hebt.');
   const own = (await query<{ user_id: string }>('SELECT user_id FROM projects WHERE id = $1', [projectId])).rows[0];
   if (own?.user_id === targetId) {
-    const next = (await query<{ user_id: string; color: string | null }>('SELECT pm.user_id, pm.color FROM project_members pm JOIN users u ON u.id = pm.user_id AND u.is_active WHERE pm.project_id = $1 AND pm.user_id <> $2 ORDER BY pm.created_at LIMIT 1', [projectId, targetId])).rows[0];
+    const next = (await query<{ user_id: string; color: string | null }>('SELECT pm.user_id, pm.color FROM project_members pm JOIN users u ON u.id = pm.user_id AND u.is_active WHERE pm.project_id = $1 ORDER BY pm.created_at LIMIT 1', [projectId])).rows[0];
     if (!next) throw new Error('Geen ander lid om het project aan over te dragen');
+    await query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, next.user_id]);
     await query('UPDATE projects SET user_id = $2, owner_color = $3, updated_at = now() WHERE id = $1', [projectId, next.user_id, next.color]);
+  } else {
+    await query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, targetId]);
   }
-  await query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, targetId]);
   await query('DELETE FROM project_agent_users WHERE project_id = $1 AND user_id = $2', [projectId, targetId]);
   await query('DELETE FROM project_agents WHERE project_id = $1 AND added_by = $2', [projectId, targetId]);
   await query('DELETE FROM project_connectors WHERE project_id = $1 AND connector_id IN (SELECT id FROM connectors WHERE user_id = $2)', [projectId, targetId]);

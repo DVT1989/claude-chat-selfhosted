@@ -9,6 +9,7 @@ import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { config } from './config';
 import { guardProjectDir } from './services/projectDirGuard';
+import { initRunUsers } from './services/runUsers';
 import { pool } from './db';
 import { redis } from './redis';
 import { authRouter } from './routes/auth';
@@ -38,6 +39,9 @@ import { ensureTasksSchema, startTaskScheduler } from './services/tasks';
 import { assistantRouter } from './routes/assistant';
 import { insightsRouter } from './routes/insights';
 import { ninjaoneRouter } from './routes/ninjaone';
+import { grippRouter } from './routes/gripp';
+import { renderRouter } from './routes/render';
+import { icloudRouter } from './routes/icloud';
 import { ensureInsightsSchema } from './services/insights';
 import { ensureHistorySchema } from './services/history';
 import { ensureContextSchema } from './services/contextBudget';
@@ -216,6 +220,9 @@ app.use('/tasks', tasksRouter);
 app.use('/assistant', assistantRouter);
 app.use('/insights', insightsRouter);
 app.use('/ninjaone', ninjaoneRouter);
+app.use('/gripp', grippRouter);
+app.use('/render', renderRouter);
+app.use('/icloud', icloudRouter);
 
 // ── Error handler ─────────────────────────────────────────────
 app.use(errorHandler);
@@ -237,14 +244,10 @@ async function start() {
     await ensureTranslationsTable();
     await ensureNasPasswordTables();
     await ensureSettingsTable();
-    // Microsoft 365 became opt-in per agent (config.agent_access: agent id -> read|write). Once: every existing agent of the
-    // owner keeps access, as Lezen (the old situation was nearly read-only), so nobody loses access unnoticed.
-    await pool.query(`UPDATE connectors c SET config = c.config || jsonb_build_object('agent_access_v', 2, 'agent_access',
-        COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each_text(COALESCE(c.config->'agent_access', '{}'::jsonb)) AS e(k, v) WHERE v IN ('read', 'write')), '{}'::jsonb)
-        || COALESCE((SELECT jsonb_object_agg(a.id::text, 'read') FROM agents a WHERE a.user_id = c.user_id
-                      AND NOT (COALESCE(c.config->'agent_access', '{}'::jsonb) ? a.id::text)
-                      AND COALESCE(c.config->'agent_access'->>a.id::text, '') <> 'none'), '{}'::jsonb))
-      WHERE c.type = 'm365' AND COALESCE((c.config->>'agent_access_v')::int, 0) < 2`);
+    // Microsoft 365 became opt-in per agent: keep explicit read/write entries, drop 'none' (and so every agent without an entry)
+    await pool.query(`UPDATE connectors SET config = config || jsonb_build_object('agent_access_v', 2, 'agent_access',
+        COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each_text(COALESCE(config->'agent_access', '{}'::jsonb)) AS e(k, v) WHERE v IN ('read', 'write')), '{}'::jsonb))
+      WHERE type = 'm365' AND COALESCE((config->>'agent_access_v')::int, 0) < 2`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversation_attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -283,11 +286,7 @@ async function start() {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_mode VARCHAR(16) NOT NULL DEFAULT 'system'");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS accent_color VARCHAR(7) NOT NULL DEFAULT '#CC785C'");
     // Backfill: derive from old theme column
-    await pool.query(`UPDATE users SET theme_mode = CASE
-      WHEN theme LIKE 'light%' THEN 'light'
-      WHEN theme LIKE 'dark%' THEN 'dark'
-      ELSE theme_mode END
-      WHERE theme_mode = 'system' AND theme IS NOT NULL`);
+    // theme_mode backfill from the old theme column removed: it ran on every start and reset a chosen 'system' to dark
     await pool.query(`UPDATE users SET accent_color = CASE
       WHEN theme = 'dark-blue' THEN '#4A9EFF'
       WHEN theme = 'light-blue' THEN '#2563EB'
@@ -366,6 +365,7 @@ async function start() {
   }
 
 
+  try { await initRunUsers(); } catch (err) { console.error('✗ Run users init failed:', err); }
   try { guardProjectDir(); } catch (err) { console.error('✗ Project dir guard failed:', err); }
 
   // Verify Redis connection

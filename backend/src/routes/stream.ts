@@ -314,6 +314,7 @@ async function startOrJoinStream(
   attachmentIds: string[],
   /** Instructions for Claude in front of this message (device sessions), never stored as the user's text */
   promptPrefix?: string,
+  replyTo?: ReplyQuote,
 ): Promise<void> {
   // ── Join an in-flight task if one exists for this conversation ──
   const existing = broker.getActiveTask(conv.id);
@@ -370,7 +371,35 @@ async function startOrJoinStream(
     attachmentIds,
     push: true,
     promptPrefix,
+    replyTo,
   });
+}
+
+export interface ReplyQuote { id: string; role: string; name: string; text: string }
+
+/** Quote of an earlier message in this conversation (max 200 chars, plain text), or null when it is not in it */
+async function buildReplyQuote(convId: string, messageId: string, userName: string): Promise<ReplyQuote | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(messageId)) return null;
+  const r = await query<{ id: string; role: string; content: string }>(
+    'SELECT id, role, content FROM messages WHERE id = $1 AND conversation_id = $2', [messageId, convId]);
+  const m = r.rows[0];
+  if (!m || (m.role !== 'user' && m.role !== 'assistant')) return null;
+  let text = m.content;
+  if (m.role === 'assistant' && text.trimStart().startsWith('[')) {
+    try {
+      const ev = JSON.parse(text) as Array<{ type?: string; text?: string; content?: string }>;
+      text = ev.filter((e) => e.type === 'text').map((e) => e.text ?? e.content ?? '').join('\n');
+    } catch { /* plain text */ }
+  }
+  text = text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[#>\s*+-]+/gm, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  if (text.length > 200) text = text.slice(0, 199).trimEnd() + '…';
+  return { id: m.id, role: m.role, name: m.role === 'assistant' ? 'Claude' : userName, text };
 }
 
 export interface StartRunOptions {
@@ -388,6 +417,8 @@ export interface StartRunOptions {
   promptPrefix?: string;
   /** Sent by the app itself (e.g. continue after a restart): shown as a small notice, not as the user's bubble */
   auto?: 'resume' | 'limit' | 'task' | 'agent' | 'delegation';
+  /** The user replies to an earlier message: quote goes to Claude and is stored in metadata.reply_to */
+  replyTo?: ReplyQuote;
 }
 
 /**
@@ -475,22 +506,37 @@ async function prepareAndRun(
     } catch (e) { console.error('[stream] shared context failed:', e); }
   }
 
+  if (o.replyTo) {
+    promptPrefix = [promptPrefix, `De gebruiker reageert op dit eerdere bericht van ${o.replyTo.role === 'assistant' ? 'Claude' : 'de gebruiker'}: "${o.replyTo.text}"`].filter(Boolean).join('\n\n');
+  }
+
   // Load ALL active connectors for this user (not just conversation-linked)
+  // Plus the connectors that agents shared with this user may use (the owner's, chosen per agent)
+  let sharedAgentIds: string[] = [];
+  try {
+    const { listAgents } = await import('../services/agents');
+    sharedAgentIds = (await listAgents(o.userId)).filter((a) => a.is_active && a.owner_id !== o.userId).map((a) => a.id);
+  } catch (err) { console.error('[stream] shared agents failed:', err); }
   const connResult = await query<{
-    id: string; name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null; owner_id: string;
+    id: string; name: string; type: string; config: Record<string, unknown>; credentials_enc: string | null; owner_id: string; agent_name: string | null; agent_id: string | null;
   }>(
-    `SELECT id, name, type, config, credentials_enc, user_id AS owner_id
+    `SELECT id, name, type, config, credentials_enc, user_id AS owner_id, NULL::text AS agent_name, NULL::text AS agent_id
      FROM connectors
-     WHERE user_id = $1 AND is_active = true AND NOT $3::boolean
+     WHERE user_id = $1 AND is_active = true AND NOT $4::boolean
      UNION ALL
-     -- connectors that members share with the project (their own, see routes/projects.ts); credentials stay with the member
-     SELECT c.id, c.name || ' (' || p.name || ')', c.type, c.config, c.credentials_enc, c.user_id
+     SELECT c.id, c.name || ' (' || a.name || ')', c.type, c.config, c.credentials_enc, c.user_id, a.name, a.id::text
+     FROM agent_connectors ac
+     JOIN agents a ON a.id = ac.agent_id JOIN connectors c ON c.id = ac.connector_id AND c.user_id = a.user_id
+     WHERE ac.agent_id = ANY($2::uuid[]) AND c.is_active = true AND NOT $4::boolean
+     UNION ALL
+     -- connectors that members share with the project (their own, see routes/projects.ts)
+     SELECT c.id, c.name || ' (' || p.name || ')', c.type, c.config, c.credentials_enc, c.user_id, NULL::text, NULL::text
      FROM project_connectors pc
      JOIN projects p ON p.id = pc.project_id
      JOIN connectors c ON c.id = pc.connector_id
-     WHERE pc.project_id = $2::uuid AND c.is_active = true`,
-    // shared project: only the connectors the project shares (no own connectors of the asker outside it)
-    [o.userId, sharedProject ? project!.id : null, sharedProject],
+     WHERE pc.project_id = $3::uuid AND c.is_active = true`,
+    // shared project: only the connectors the project shares (no own connectors of the asker or the owner outside it)
+    [o.userId, sharedProject ? [] : sharedAgentIds, sharedProject ? project!.id : null, sharedProject],
   );
 
   // connectors limited to chosen agents (config.agent_ids): only for the owner's main Claude and those agents
@@ -501,24 +547,30 @@ async function prepareAndRun(
     connResult.rows = connResult.rows.filter(c => connectorAllowed(c.config ?? {}, runAgents));
     // Microsoft 365 is opt-in per agent (config.agent_access: agent id -> 'read' | 'write'; no entry = no access).
     // The owner's own main Claude (no agent in the run) keeps full access.
-    connResult.rows = connResult.rows.filter((c) => c.type !== 'm365' || m365RunMode(c.config?.agent_access, runAgents) !== null);
+    connResult.rows = connResult.rows.filter((c) => {
+      if (c.type !== 'm365') return true;
+      const agents = c.agent_id ? [c.agent_id] : runAgents;
+      return m365RunMode(c.config?.agent_access, agents) !== null;
+    });
   }
 
   const connectors: ConnectorConfig[] = connResult.rows.map(c => ({
     name: c.name,
     type: c.type as ConnectorConfig['type'],
-    config: c.config,
+    config: c.agent_name ? { ...c.config, agentOnly: c.agent_name } : c.config,
     credentials: c.credentials_enc
       ? (() => { try { return JSON.parse(decrypt(c.credentials_enc!)) as Record<string, unknown>; } catch { return {}; } })()
       : {},
   }));
   // Microsoft 365: trade the stored refresh token for a fresh Graph access token for this run
+  // Rights per agent (config.agent_access): an agent set to "read" gets a token with only read rights
   await Promise.all(connResult.rows.map(async (row, i) => {
     if (row.type !== 'm365' || !row.credentials_enc) return;
     const access = (row.config.agent_access ?? {}) as Record<string, string>;
-    const mode: 'read' | 'write' = m365RunMode(access, runAgents) ?? 'read';
+    const agents = row.agent_id ? [row.agent_id] : runAgents;
+    const mode: 'read' | 'write' = m365RunMode(access, agents) ?? 'read';
     // names for the prompt: agents of the owner with read / no access (only relevant for a full-access main run)
-    const own = mode === 'write' ? (await query<{ id: string; name: string }>('SELECT id::text AS id, name FROM agents WHERE user_id = $1 AND is_active = true ORDER BY name', [o.userId])).rows : [];
+    const own = mode === 'write' ? (await query<{ id: string; name: string }>('SELECT id::text AS id, name FROM agents WHERE user_id = $1 AND is_active = true ORDER BY name', [row.owner_id])).rows : [];
     const names = (f: (id: string) => boolean) => own.filter((a) => f(a.id)).map((a) => a.name);
     connectors[i].config = { ...connectors[i].config, m365Mode: mode,
       readOnlyAgents: names((id) => access[id] === 'read'), noAccessAgents: names((id) => access[id] !== 'read' && access[id] !== 'write') };
@@ -550,6 +602,30 @@ async function prepareAndRun(
     } catch (err) {
       connectors[i].credentials = {};
       console.error('[stream] ninjaone token failed:', err);
+    }
+  }));
+
+  // GRIPP: Claude gets a per-run proxy token, never the API token
+  await Promise.all(connResult.rows.map(async (row, i) => {
+    if (row.type !== 'gripp') return;
+    try {
+      const { issueGrippToken } = await import('../services/gripp');
+      connectors[i].credentials = { token: await issueGrippToken(row.owner_id, row.id) };
+    } catch (err) {
+      connectors[i].credentials = {};
+      console.error('[stream] gripp token failed:', err);
+    }
+  }));
+
+  // iCloud mail: Claude gets a per-run proxy token, never the app password
+  await Promise.all(connResult.rows.map(async (row, i) => {
+    if (row.type !== 'icloud') return;
+    try {
+      const { issueIcloudToken } = await import('../services/icloud');
+      connectors[i].credentials = { token: await issueIcloudToken(row.owner_id, row.id) };
+    } catch (err) {
+      connectors[i].credentials = {};
+      console.error('[stream] icloud token failed:', err);
     }
   }));
 
@@ -609,7 +685,7 @@ async function prepareAndRun(
   }
   await query(
     'INSERT INTO messages (conversation_id, role, content, metadata, user_id) VALUES ($1, $2, $3, $4::jsonb, $5)',
-    [conv.id, 'user', userMessage, JSON.stringify({ ...(msgAtts.length ? { attachments: msgAtts } : {}), ...(o.auto ? { auto: o.auto } : {}) }), o.auto ? null : o.userId],
+    [conv.id, 'user', userMessage, JSON.stringify({ ...(msgAtts.length ? { attachments: msgAtts } : {}), ...(o.auto ? { auto: o.auto } : {}), ...(o.replyTo ? { reply_to: o.replyTo } : {}) }), o.auto ? null : o.userId],
   );
   if (sharedProject && project && !o.auto) {
     await query(`INSERT INTO conversation_reads (conversation_id, user_id, last_read_at) VALUES ($1,$2,now())
@@ -784,7 +860,7 @@ streamRouter.get('/:id/stream', async (req: Request, res: Response, next) => {
 streamRouter.post('/:id/stream', async (req: Request, res: Response, next) => {
   try {
     // ── Body validation (mirrors GET's pre-flight checks) ──
-    const body = (req.body ?? {}) as { message?: unknown; attachments?: unknown; context?: unknown };
+    const body = (req.body ?? {}) as { message?: unknown; attachments?: unknown; context?: unknown; reply_to?: unknown };
     const userMessage = typeof body.message === 'string' ? body.message : '';
     const context = typeof body.context === 'string' ? body.context.trim().slice(0, 4000) : '';
 
@@ -810,7 +886,13 @@ streamRouter.post('/:id/stream', async (req: Request, res: Response, next) => {
       ? body.attachments.filter((x): x is string => typeof x === 'string' && x.length > 0)
       : [];
 
-    await startOrJoinStream(req, res, conv, userMessage, attachmentIds, context || undefined);
+    let replyTo: ReplyQuote | undefined;
+    if (typeof body.reply_to === 'string' && body.reply_to) {
+      const q = await buildReplyQuote(conv.id, body.reply_to, 'Jij');
+      if (!q) throw new AppError(400, 'Bericht om op te reageren niet gevonden in dit gesprek');
+      replyTo = q;
+    }
+    await startOrJoinStream(req, res, conv, userMessage, attachmentIds, context || undefined, replyTo);
   } catch (err) {
     if (!res.headersSent) {
       next(err);
@@ -1039,6 +1121,12 @@ async function runConversationTask(args: RunArgs): Promise<void> {
 
   const handleEvent = (ev: { type: string; [key: string]: unknown }): void => {
     switch (ev.type) {
+      case 'limit_note':
+        // the owner's account of a shared agent is full: this turn runs on the user's own account (one quiet line)
+        hasStructured = true;
+        assistantEvents.push({ type: 'limit_note', kind: ev.kind, owner: ev.owner, usableAt: ev.usableAt, at: new Date().toISOString() });
+        void flushNow();
+        break;
       case 'thinking':
         hasStructured = true;
         assistantEvents.push({ type: 'thinking', thinking: ev.thinking, sid: broker.publish(conv.id, 'thinking', { thinking: ev.thinking }) });
@@ -1138,6 +1226,9 @@ async function runConversationTask(args: RunArgs): Promise<void> {
         // not shown yet: the run may continue on another account (see the failover below)
         limitMessage = typeof ev.message === 'string' ? ev.message : '';
         break;
+      case 'prompt_suggestion':
+        if (typeof ev.suggestion === 'string') broker.publish(conv.id, 'prompt_suggestion', { suggestion: ev.suggestion });
+        break;
       case 'done':
         // Bookkeeping only — final 'done' SSE event is published explicitly below.
         doneCostUsd = ev.costUsd as number | undefined;
@@ -1170,13 +1261,21 @@ async function runConversationTask(args: RunArgs): Promise<void> {
   // subscription has room, the answer continues there once (same session, so nothing is lost).
   const SWITCH_NOTE = 'Ik doe even een snelle wissel naar mijn andere account: de tokens voor deze sessie zijn bijna op. Ik ga gewoon verder.';
   const CONTINUE_PROMPT = 'Je werd net onderbroken door een gebruikslimiet. Ga verder met mijn vorige vraag, precies waar je gebleven was.';
+  // admin chat and its workplaces only get proxy/token connectors; passwords (ssh, ftp, smb, sudo) stay out of the privileged run
+  const ADMIN_RUN_TYPES: string[] = ['devices', 'github', 'lessons', 'focustrack', 'google-search-console', 'ninjaone', 'gripp', 'icloud'];
+  if (isSystemConv) {
+    const skipped = connectors.filter(c => !ADMIN_RUN_TYPES.includes(c.type) && c.type !== 'messenger');
+    if (skipped.length) console.log(`[stream] admin-run ${conv.id}: niet meegegeven ${skipped.map(c => `${c.type}:${c.name}`).join(', ')}`);
+  }
   const attempt = async (message: string, sid: string | null, first: boolean): Promise<string> => {
+    const promptSuggestions = (await query<{ on: boolean | null }>("SELECT (preferences->>'prompt_suggestions')::boolean AS on FROM users WHERE id = $1", [userId])).rows[0]?.on === true;
     const onEv = (ev: unknown) => handleEvent(ev as { type: string; [key: string]: unknown });
     const result = isSystemConv
-      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => c.type === 'devices' || c.type === 'github' || c.type === 'lessons' || c.type === 'focustrack' || c.type === 'google-search-console' || c.type === 'ninjaone'), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
-          language, first ? attachmentInfos : [], effectiveModel, { privileged: true, conversationId: conv.id, werkplek: !!(conv.metadata as { delegation_id?: string }).delegation_id })
+      ? await runTask(userId, message, sid, onEv, abort.signal, connectors.filter(c => ADMIN_RUN_TYPES.includes(c.type)), ensureAdminProjectWorkspace(userId, language ?? 'nl', !!(conv.metadata as { delegation_id?: string }).delegation_id),
+          language, first ? attachmentInfos : [], effectiveModel, { privileged: true, conversationId: conv.id, werkplek: !!(conv.metadata as { delegation_id?: string }).delegation_id, promptSuggestions })
       : await runTask(userId, message, sid, onEv, abort.signal, connectors, undefined,
-          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project, readOnly: !!(conv.metadata as { federation_consult?: string }).federation_consult });
+          language, first ? attachmentInfos : [], effectiveModel, { appendSystemPrompt: args.appendSystemPrompt, conversationId: conv.id, project: args.project, readOnly: !!(conv.metadata as { federation_consult?: string }).federation_consult, promptSuggestions });
+    if (args.project?.shared) fixSharedProjectPerms(args.project.id, args.project.shared.gid);
     return result.sessionId;
   };
   /** Remove the limit notice of the interrupted attempt from the answer being built. */
@@ -1193,7 +1292,6 @@ async function runConversationTask(args: RunArgs): Promise<void> {
 
   try {
     newSessionId = await attempt(args.promptPrefix ? `${args.promptPrefix}\n\n${userMessage}` : userMessage, sessionId, true);
-    if (args.project?.shared) fixSharedProjectPerms(args.project.id, args.project.shared.gid);
     if (limitHit && !abort.signal.aborted && await hasRoomElsewhere(userId)) {
       limitHit = false;
       dropLimitTraces();

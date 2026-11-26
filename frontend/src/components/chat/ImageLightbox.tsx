@@ -285,7 +285,7 @@ function ImageLightbox({ src, alt, thumb, onClosed }: { src: string; alt: string
   })();
 
   const btn =
-    'w-11 h-11 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white bg-white/12 border border-white/18 hover:bg-white/22 active:scale-[.94] transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white';
+    'w-11 h-11 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white bg-black/55 border border-white/30 backdrop-blur-[8px] hover:bg-black/70 shadow-[0_2px_8px_rgba(0,0,0,.35)] active:scale-[.94] transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white';
   const icon = { className: 'w-5 h-5', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, viewBox: '0 0 24 24', 'aria-hidden': true };
 
   return createPortal(

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-26
+- [Sam] Lightbox (ontwerprevisie): knoppen (zoom uit, sluiten) donker met blur en schaduw zodat ze ook in ware grootte op een lichte afbeelding zichtbaar zijn (components/chat/ImageLightbox.tsx) - live ja
 - [Sam] Een Windows-pc (Claude Agent 1.7.0) en een Chrome (extensie 1.4.0) kunnen aan meerdere Claude Chat-servers tegelijk gekoppeld worden; koppelen met een andere server voegt toe in plaats van te vervangen, ontkoppelen per server (backend/agent/*.go, installer.nsi, Dockerfile AGENT_VERSION, routes/devices.ts, browser-extension) - live ja
 - [Sam] Admin-chat en werkplekken krijgen alle koppelingen van de beheerder (ook SSH, SFTP, FTP, SMB, git, Microsoft 365 en sudo) zoals een gewone chat (services/claudeCode.ts, routes/stream.ts) - live ja
 
